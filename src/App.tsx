@@ -525,19 +525,33 @@ function DraftBlock({
     </div>
   );
 
-  // -------- панель деталей (mobile bottom-sheet + свернуть) --------
+  // -------- панель деталей (mobile bottom-sheet — компактная) --------
   const [minimized, setMinimized] = useState(false);
   const mobilePanel = (
     <>
       {!minimized && (
         <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-auto">
-          <div className="mx-auto max-w-md rounded-t-2xl border border-neutral-700/70 bg-neutral-900/95 p-3 shadow-2xl backdrop-blur pb-[env(safe-area-inset-bottom)]">
+          <div
+            className="
+              mx-auto max-w-md rounded-t-2xl border border-neutral-700/70
+              bg-neutral-900/95 shadow-2xl backdrop-blur
+              p-3 pb-[env(safe-area-inset-bottom)]
+              max-h-[36vh] overflow-y-auto  /* ключевые изменения: меньше по высоте, со скроллом */
+            "
+          >
             <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-neutral-700/80" />
             <div className="mb-2 flex items-center justify-between text-sm">
               <div className="font-medium text-neutral-200">Детали брони</div>
               <button onClick={() => setMinimized(true)} className="text-xs text-neutral-400 underline underline-offset-4">Свернуть</button>
             </div>
-            <PanelContent canSave={canSave} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
+            <PanelContent
+              canSave={canSave}
+              form={form}
+              setForm={setForm}
+              onSave={onSave}
+              onCancel={onCancel}
+              draft={draft}
+            />
           </div>
         </div>
       )}
