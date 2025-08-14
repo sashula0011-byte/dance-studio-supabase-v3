@@ -57,6 +57,15 @@ const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(ma
 const genId = () => Math.random().toString(36).slice(2, 9);
 const overlaps = (aS:number,aE:number,bS:number,bE:number) => aS < bE && aE > bS;
 
+// helper: upsert by id (чтобы не было дублей при INSERT realtime + локальном добавлении)
+function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
+  const i = list.findIndex((x) => x.id === item.id);
+  if (i === -1) return [...list, item];
+  const copy = list.slice();
+  copy[i] = item;
+  return copy;
+}
+
 function dateTodayString() {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -85,9 +94,9 @@ function useBookingsStore() {
     const ch = sb
       .channel("bookings")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "bookings" }, (p: any) =>
-        setItems(prev => [...prev, p.new as Booking]))
+        setItems(prev => upsertById(prev, p.new as Booking)))
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "bookings" }, (p: any) =>
-        setItems(prev => prev.map(x => x.id === p.new.id ? (p.new as Booking) : x)))
+        setItems(prev => upsertById(prev, p.new as Booking)))
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "bookings" }, (p: any) =>
         setItems(prev => prev.filter(x => x.id !== p.old.id)))
       .subscribe();
@@ -114,7 +123,7 @@ function useBookingsStore() {
     const sb = supabase!;
     const { error, data } = await sb.from("bookings").insert(b).select().single();
     if (error) throw error;
-    setItems(prev => [...prev, data as Booking]);
+    setItems(prev => upsertById(prev, data as Booking));
   }
 
   async function remove(id: string) {
