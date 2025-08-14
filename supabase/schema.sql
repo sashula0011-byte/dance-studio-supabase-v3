@@ -39,3 +39,18 @@ do $$ begin
   create policy "delete all" on public.bookings for delete using (true);
 exception when duplicate_object then null; end $$;
 
+-- на всякий случай
+create extension if not exists btree_gist;
+
+-- снимаем старое ограничение, если оно есть
+alter table public.bookings
+  drop constraint if exists no_overlaps;
+
+-- ставим новое: «впритык» разрешён (верхняя граница исключена: [) )
+alter table public.bookings
+  add constraint no_overlaps
+  exclude using gist (
+    date with =,
+    room with =,
+    int4range(start, "end", '[)') with &&
+  );
