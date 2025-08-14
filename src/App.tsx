@@ -10,6 +10,11 @@ import { supabase } from "./lib/supabase";
  * - Тап ≠ скролл: черновик создаётся ТОЛЬКО при коротком тапе без сдвига (>6px = прокрутка, не создаём)
  * - Обзор: список броней по залам с двухшаговым удалением.
  * - Хранилище: Supabase (если настроен .env) или localStorage (fallback).
+ *
+ * 2025-08-15 — mobile fix: клики по панели не создают черновик
+ *   • добавлен data-kind="panel" для мобильного шита и кнопки «Детали»
+ *   • onPointer*Capture со stopPropagation на шите (mobile)
+ *   • дополнительные проверки в onCanvasPointerDown/Up на попадание в панель
  */
 
 const ROOMS = ["Белый", "Серый", "Черный"] as const;
@@ -216,10 +221,14 @@ function AddScreen({
   const [form, setForm] = useState<{ teacher?: Teacher; type?: LessonType; note?: string }>({});
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+  const isInsidePanel = (el: EventTarget | null) => !!(el as HTMLElement | null)?.closest?.('[data-kind="panel"]');
+
   // --- TAP vs SCROLL: создаём черновик только при коротком тапе без сдвига
   const tapRef = useRef<{ startX:number; startY:number; moved:boolean } | null>(null);
   function onCanvasPointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    if ((e.target as HTMLElement).closest('[data-kind="block"]') || (e.target as HTMLElement).closest('[data-kind="panel"]')) return;
+    // игнорим тапы по панели/её дочерним элементам (включая мобильный шит)
+    if (isInsidePanel(e.target)) return;
+    if ((e as any).button !== undefined && (e as any).button !== 0) return; // только primary button для мыши
     tapRef.current = { startX: e.clientX, startY: e.clientY, moved: false };
   }
   function onCanvasPointerMove(e: React.PointerEvent<HTMLDivElement>) {
@@ -230,6 +239,8 @@ function AddScreen({
   }
   function onCanvasPointerUp(e: React.PointerEvent<HTMLDivElement>) {
     if (!tapRef.current || tapRef.current.moved) { tapRef.current = null; return; }
+    // если палец/клик отпустили на панели — не создавать черновик
+    if (isInsidePanel(e.target)) { tapRef.current = null; return; }
     const cont = scrollRef.current!;
     const rect = cont.getBoundingClientRect();
     const y = e.clientY - rect.top + cont.scrollTop;
@@ -525,18 +536,22 @@ function DraftBlock({
     </div>
   );
 
-  // -------- панель деталей (mobile bottom-sheet — компактная) --------
+  // -------- панель деталей (mobile bottom-sheet — компактная, блокируем всплытие pointer) --------
   const [minimized, setMinimized] = useState(false);
   const mobilePanel = (
     <>
       {!minimized && (
         <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-auto">
           <div
+            data-kind="panel"
+            onPointerDownCapture={(e) => e.stopPropagation()}
+            onPointerUpCapture={(e) => e.stopPropagation()}
+            onPointerMoveCapture={(e) => e.stopPropagation()}
             className="
               mx-auto max-w-md rounded-t-2xl border border-neutral-700/70
               bg-neutral-900/95 shadow-2xl backdrop-blur
               p-3 pb-[env(safe-area-inset-bottom)]
-              max-h-[36vh] overflow-y-auto  /* ключевые изменения: меньше по высоте, со скроллом */
+              max-h-[36vh] overflow-y-auto
             "
           >
             <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-neutral-700/80" />
@@ -557,6 +572,10 @@ function DraftBlock({
       )}
       {minimized && (
         <button
+          data-kind="panel"
+          onPointerDownCapture={(e) => e.stopPropagation()}
+          onPointerUpCapture={(e) => e.stopPropagation()}
+          onPointerMoveCapture={(e) => e.stopPropagation()}
           className="fixed bottom-3 right-3 z-40 rounded-full border border-neutral-700 bg-neutral-900/90 px-4 py-2 text-sm text-neutral-200 shadow-lg"
           onClick={() => setMinimized(false)}
           aria-label="Открыть детали"
