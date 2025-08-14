@@ -4,7 +4,10 @@ import { supabase } from "./lib/supabase";
 
 /**
  * Танцевальная студия — бронирование залов (тёмная тема)
- * - Добавление: шкала 07:00–24:00, drag/resize с шагом 10 мин, панель деталей прилипает к черновику.
+ * - Добавление: шкала 07:00–24:00, drag/resize с шагом 10 мин, панель деталей:
+ *   • Desktop — «прилипает» к черновику сбоку
+ *   • Mobile — нижний шит (bottom-sheet) + можно свернуть в кнопку «Детали»
+ * - Тап ≠ скролл: черновик создаётся ТОЛЬКО при коротком тапе без сдвига (>6px = прокрутка, не создаём)
  * - Обзор: список броней по залам с двухшаговым удалением.
  * - Хранилище: Supabase (если настроен .env) или localStorage (fallback).
  */
@@ -124,7 +127,7 @@ export default function App() {
   const [route, setRoute] = useState<"home" | "add" | "overview">("home");
   const [date, setDate] = useState<string>(dateTodayString());
   const [room, setRoom] = useState<Room>("Белый");
-  const { items: bookings, setItems: setBookings, loading, error, remote, loadDay, add, remove } = useBookingsStore();
+  const { items: bookings, loading, error, remote, loadDay, add, remove } = useBookingsStore();
 
   useEffect(() => { loadDay(date); }, [date]);
 
@@ -148,30 +151,21 @@ export default function App() {
             </span>
           </div>
         </div>
-        {error && (
-          <div className="mx-auto max-w-6xl px-4 pb-3 text-xs text-rose-400">Ошибка: {error}</div>
-        )}
+        {error && <div className="mx-auto max-w-6xl px-4 pb-3 text-xs text-rose-400">Ошибка: {error}</div>}
       </header>
 
-      {route === "home" && (
-        <HomeScreen onAdd={() => setRoute("add")} onOverview={() => setRoute("overview")} />
-      )}
+      {route === "home" && <HomeScreen onAdd={() => setRoute("add")} onOverview={() => setRoute("overview")} />}
 
       {route === "add" && (
         <AddScreen
-          date={date} setDate={setDate}
-          room={room} setRoom={setRoom}
+          date={date} setDate={setDate} room={room} setRoom={setRoom}
           bookings={bookings}
           onSaveBooking={async (b) => add(b)}
         />
       )}
 
       {route === "overview" && (
-        <OverviewScreen
-          date={date} setDate={setDate}
-          bookings={bookings}
-          onDelete={async (id) => remove(id)}
-        />
+        <OverviewScreen date={date} setDate={setDate} bookings={bookings} onDelete={async (id) => remove(id)} />
       )}
 
       <footer className="border-t border-neutral-800/80">
@@ -191,18 +185,8 @@ function HomeScreen({ onAdd, onOverview }: { onAdd: () => void; onOverview: () =
       <p className="mt-2 text-neutral-400">Быстрое добавление занятий и обзор занятости залов.</p>
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2">
-        <PrimaryCard
-          title="Добавить занятие"
-          icon={<Plus className="h-6 w-6" />}
-          onClick={onAdd}
-          description="Перейти к бронированию выбранного зала на шкале времени."
-        />
-        <PrimaryCard
-          title="Занятость залов"
-          icon={<Eye className="h-6 w-6" />}
-          onClick={onOverview}
-          description="Открыть календарь с текущей занятостью по каждому залу."
-        />
+        <PrimaryCard title="Добавить занятие" icon={<Plus className="h-6 w-6" />} onClick={onAdd} description="Перейти к бронированию выбранного зала на шкале времени." />
+        <PrimaryCard title="Занятость залов" icon={<Eye className="h-6 w-6" />} onClick={onOverview} description="Открыть календарь с текущей занятостью по каждому залу." />
       </div>
     </main>
   );
@@ -210,10 +194,7 @@ function HomeScreen({ onAdd, onOverview }: { onAdd: () => void; onOverview: () =
 
 function PrimaryCard({ title, description, icon, onClick }: { title: string; description: string; icon: React.ReactNode; onClick: () => void }) {
   return (
-    <button
-      onClick={onClick}
-      className="group relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 text-left transition hover:border-neutral-700 hover:bg-neutral-800/60 active:scale-[.995]"
-    >
+    <button onClick={onClick} className="group relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 text-left transition hover:border-neutral-700 hover:bg-neutral-800/60 active:scale-[.995]">
       <div className="flex items-center justify-between">
         <div className="text-lg font-medium">{title}</div>
         <div className="rounded-xl border border-neutral-700/60 bg-neutral-800/60 p-3">{icon}</div>
@@ -227,24 +208,45 @@ function PrimaryCard({ title, description, icon, onClick }: { title: string; des
 function AddScreen({
   date, setDate, room, setRoom, bookings, onSaveBooking,
 }: {
-  date: string;
-  setDate: (v: string) => void;
-  room: Room;
-  setRoom: (r: Room) => void;
-  bookings: Booking[];
-  onSaveBooking: (b: Booking) => void | Promise<void>;
+  date: string; setDate: (v: string) => void;
+  room: Room; setRoom: (r: Room) => void;
+  bookings: Booking[]; onSaveBooking: (b: Booking) => void | Promise<void>;
 }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [form, setForm] = useState<{ teacher?: Teacher; type?: LessonType; note?: string }>({});
-
-  // единый скролл-контейнер
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const dayRoomBookings = useMemo(() =>
-    bookings.filter((b) => b.date === date && b.room === room).sort((a, b) => a.start - b.start),
-  [bookings, date, room]);
+  // --- TAP vs SCROLL: создаём черновик только при коротком тапе без сдвига
+  const tapRef = useRef<{ startX:number; startY:number; moved:boolean } | null>(null);
+  function onCanvasPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if ((e.target as HTMLElement).closest('[data-kind="block"]') || (e.target as HTMLElement).closest('[data-kind="panel"]')) return;
+    tapRef.current = { startX: e.clientX, startY: e.clientY, moved: false };
+  }
+  function onCanvasPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!tapRef.current) return;
+    const dx = Math.abs(e.clientX - tapRef.current.startX);
+    const dy = Math.abs(e.clientY - tapRef.current.startY);
+    if (dx > 6 || dy > 6) tapRef.current.moved = true; // скролл/перетаскивание
+  }
+  function onCanvasPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (!tapRef.current || tapRef.current.moved) { tapRef.current = null; return; }
+    const cont = scrollRef.current!;
+    const rect = cont.getBoundingClientRect();
+    const y = e.clientY - rect.top + cont.scrollTop;
+    const minutesFromStart = START_MIN + y / PX_PER_MIN;
+    const start = clamp(snapToStep(minutesFromStart), START_MIN, END_MIN - MIN_DURATION);
+    const end = clamp(start + DEFAULT_DURATION, start + MIN_DURATION, END_MIN);
+    setDraft({ id: `draft-${genId()}`, date, room, start, end });
+    setForm({});
+    tapRef.current = null;
+  }
 
-  // автопрокрутка к черновику
+  const dayRoomBookings = useMemo(
+    () => bookings.filter((b) => b.date === date && b.room === room).sort((a, b) => a.start - b.start),
+    [bookings, date, room]
+  );
+
+  // автопрокрутка к черновику (чтобы он и панель были в зоне видимости)
   useEffect(() => {
     if (!draft || !scrollRef.current) return;
     const top = (draft.start - START_MIN) * PX_PER_MIN;
@@ -262,22 +264,9 @@ function AddScreen({
     if (!draft) return false;
     const duration = draft.end - draft.start;
     if (duration < MIN_DURATION) return false;
-    for (const b of dayRoomBookings) if (draft && overlaps(draft.start, draft.end, b.start, b.end)) return false;
+    for (const b of dayRoomBookings) if (overlaps(draft.start, draft.end, b.start, b.end)) return false;
     return true;
   }, [draft, dayRoomBookings]);
-
-  function handleCanvasPointerDown(e: React.PointerEvent<HTMLDivElement>) {
-    if ((e.target as HTMLElement).closest('[data-kind="block"]') || (e.target as HTMLElement).closest('[data-kind="panel"]')) return;
-    const cont = scrollRef.current!;
-    const rect = cont.getBoundingClientRect();
-    const y = e.clientY - rect.top + cont.scrollTop;
-    const minutesFromStart = START_MIN + y / PX_PER_MIN;
-    const start = clamp(snapToStep(minutesFromStart), START_MIN, END_MIN - MIN_DURATION);
-    const end = clamp(start + DEFAULT_DURATION, start + MIN_DURATION, END_MIN);
-    const newDraft: Draft = { id: `draft-${genId()}`, date, room, start, end };
-    setDraft(newDraft);
-    setForm({});
-  }
 
   async function saveDraft() {
     if (!draft || !isDraftValid || !form.teacher || !form.type) return;
@@ -295,7 +284,6 @@ function AddScreen({
     setDraft(null);
     setForm({});
   }
-
   function cancelDraft() { setDraft(null); setForm({}); }
 
   type DragMode = null | "move" | "resize-top" | "resize-bottom";
@@ -306,7 +294,6 @@ function AddScreen({
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     dragState.current = { mode, startY: e.clientY, startStart: draft!.start, startEnd: draft!.end };
   }
-
   function onDraftPointerMove(e: React.PointerEvent) {
     if (!dragState.current || !draft) return;
     const dy = e.clientY - dragState.current.startY;
@@ -328,7 +315,6 @@ function AddScreen({
       setDraft({ ...draft, end: newEnd });
     }
   }
-
   function onDraftPointerUp(e: React.PointerEvent) {
     if (dragState.current) {
       try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
@@ -367,8 +353,15 @@ function AddScreen({
           </div>
         </div>
 
-        <div ref={scrollRef} className="relative h-[62vh] overflow-y-auto" onPointerDown={handleCanvasPointerDown}>
+        <div
+          ref={scrollRef}
+          className="relative h-[62vh] overflow-y-auto"
+          onPointerDown={onCanvasPointerDown}
+          onPointerMove={onCanvasPointerMove}
+          onPointerUp={onCanvasPointerUp}
+        >
           <div className="grid grid-cols-[72px_1fr]" style={{ height: columnHeight }}>
+            {/* Левая колонка времени с пунктирной сеткой */}
             <div className="relative border-r border-neutral-800" style={{ backgroundImage: "repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0, rgba(255,255,255,0.06) 1px, transparent 1px, transparent 20px)" }}>
               {Array.from({ length: (END_MIN - START_MIN) / 60 + 1 }).map((_, i) => {
                 const hm = START_MIN + i * 60;
@@ -386,6 +379,7 @@ function AddScreen({
               })}
             </div>
 
+            {/* Колонка зала с такой же сеткой */}
             <div className="relative" style={{ backgroundImage: "repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0, rgba(255,255,255,0.06) 1px, transparent 1px, transparent 20px)" }}>
               {Array.from({ length: (END_MIN - START_MIN) / 60 + 1 }).map((_, i) => {
                 const hm = START_MIN + i * 60;
@@ -393,8 +387,10 @@ function AddScreen({
                 return (<div key={i} className="absolute left-0 right-0" style={{ top }}><div className="border-t border-dashed border-neutral-700/70" /></div>);
               })}
 
+              {/* Сохранённые брони */}
               {dayRoomBookings.map((b) => (<Block key={b.id} booking={b} />))}
 
+              {/* Черновик */}
               {draft && (
                 <DraftBlock
                   draft={draft}
@@ -462,10 +458,18 @@ function DraftBlock({
   const top = (draft.start - START_MIN) * PX_PER_MIN;
   const height = (draft.end - draft.start) * PX_PER_MIN;
 
+  // -------- mobile detection --------
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const cb = () => setIsMobile(mq.matches);
+    cb(); mq.addEventListener("change", cb);
+    return () => mq.removeEventListener("change", cb);
+  }, []);
+
+  // -------- desktop positioning (как было) --------
   const [panelTop, setPanelTop] = useState<number>(0);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const canSave = valid && !!form.teacher && !!form.type;
-
   const [scrollTop, setScrollTop] = useState(0);
   useEffect(() => {
     const el = gridRef.current;
@@ -477,64 +481,126 @@ function DraftBlock({
   }, [gridRef]);
 
   useEffect(() => {
+    if (isMobile) return; // для мобилы рисуем bottom-sheet
     const cont = gridRef.current!;
     const y = top - scrollTop;
     const approxPanelH = panelRef.current?.offsetHeight || 220;
     const baseTop = y + height / 2 - approxPanelH / 2;
     const clampedTop = clamp(baseTop, 8, cont.clientHeight - approxPanelH - 8);
     setPanelTop(scrollTop + clampedTop);
-  }, [top, height, scrollTop, gridRef]);
+  }, [top, height, scrollTop, gridRef, isMobile]);
+
+  const canSave = valid && !!form.teacher && !!form.type;
+
+  // -------- сам черновик (общий для моб/десктоп) --------
+  const draftEl = (
+    <div
+      data-kind="block"
+      className={`absolute left-3 right-3 select-none rounded-lg border px-3 py-2 text-sm shadow-lg ${valid ? "border-sky-400/40 bg-sky-400/10" : "border-rose-500/50 bg-rose-500/10"}`}
+      style={{ top, height, touchAction: "none" as any }}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    >
+      <div className="flex items-center justify-between text-sky-200/90">
+        <div className="font-medium">{m2hm(draft.start)}–{m2hm(draft.end)}</div>
+        <div className="text-xs uppercase tracking-wide opacity-80">Черновик</div>
+      </div>
+      <div className="mt-1 text-xs text-neutral-200/90">Перетащите, чтобы изменить время и длительность</div>
+
+      <div role="separator" className="absolute inset-x-2 top-0 -translate-y-1/2 cursor-ns-resize rounded-full border border-sky-400/50 bg-sky-400/30 p-1" onPointerDown={(e) => onPointerDown(e, "resize-top")} title="Растянуть сверху" />
+      <div role="separator" className="absolute inset-x-2 bottom-0 translate-y-1/2 cursor-ns-resize rounded-full border border-sky-400/50 bg-sky-400/30 p-1" onPointerDown={(e) => onPointerDown(e, "resize-bottom")} title="Растянуть снизу" />
+      <div className="absolute inset-0 cursor-grab active:cursor-grabbing" onPointerDown={(e) => onPointerDown(e, "move")} title="Перетащить" />
+    </div>
+  );
+
+  // -------- панель деталей (desktop) --------
+  const desktopPanel = (
+    <div
+      data-kind="panel"
+      ref={panelRef}
+      className="pointer-events-auto absolute z-20 w-[280px] rounded-xl border border-neutral-700/70 bg-neutral-900/95 p-3 shadow-2xl backdrop-blur"
+      style={{ top: panelTop, right: 12 }}
+    >
+      <PanelContent canSave={canSave} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
+    </div>
+  );
+
+  // -------- панель деталей (mobile bottom-sheet + свернуть) --------
+  const [minimized, setMinimized] = useState(false);
+  const mobilePanel = (
+    <>
+      {!minimized && (
+        <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-auto">
+          <div className="mx-auto max-w-md rounded-t-2xl border border-neutral-700/70 bg-neutral-900/95 p-3 shadow-2xl backdrop-blur pb-[env(safe-area-inset-bottom)]">
+            <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-neutral-700/80" />
+            <div className="mb-2 flex items-center justify-between text-sm">
+              <div className="font-medium text-neutral-200">Детали брони</div>
+              <button onClick={() => setMinimized(true)} className="text-xs text-neutral-400 underline underline-offset-4">Свернуть</button>
+            </div>
+            <PanelContent canSave={canSave} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
+          </div>
+        </div>
+      )}
+      {minimized && (
+        <button
+          className="fixed bottom-3 right-3 z-40 rounded-full border border-neutral-700 bg-neutral-900/90 px-4 py-2 text-sm text-neutral-200 shadow-lg"
+          onClick={() => setMinimized(false)}
+          aria-label="Открыть детали"
+        >
+          Детали
+        </button>
+      )}
+    </>
+  );
 
   return (
     <>
-      <div
-        data-kind="block"
-        className={`absolute left-3 right-3 select-none rounded-lg border px-3 py-2 text-sm shadow-lg ${valid ? "border-sky-400/40 bg-sky-400/10" : "border-rose-500/50 bg-rose-500/10"}`}
-        style={{ top, height, touchAction: "none" as any }}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-      >
-        <div className="flex items-center justify-between text-sky-200/90">
-          <div className="font-medium">{m2hm(draft.start)}–{m2hm(draft.end)}</div>
-          <div className="text-xs uppercase tracking-wide opacity-80">Черновик</div>
-        </div>
-        <div className="mt-1 text-xs text-neutral-200/90">Перетащите, чтобы изменить время и длительность</div>
+      {draftEl}
+      {isMobile ? mobilePanel : desktopPanel}
+    </>
+  );
+}
 
-        <div role="separator" className="absolute inset-x-2 top-0 -translate-y-1/2 cursor-ns-resize rounded-full border border-sky-400/50 bg-sky-400/30 p-1" onPointerDown={(e) => onPointerDown(e, "resize-top")} title="Растянуть сверху" />
-        <div role="separator" className="absolute inset-x-2 bottom-0 translate-y-1/2 cursor-ns-resize rounded-full border border-sky-400/50 bg-sky-400/30 p-1" onPointerDown={(e) => onPointerDown(e, "resize-bottom")} title="Растянуть снизу" />
-        <div className="absolute inset-0 cursor-grab active:cursor-grabbing" onPointerDown={(e) => onPointerDown(e, "move")} title="Перетащить" />
+// --- содержимое панелей (общая часть) ---
+function PanelContent({
+  canSave, form, setForm, onSave, onCancel, draft
+}: {
+  canSave: boolean;
+  form: { teacher?: Teacher; type?: LessonType; note?: string };
+  setForm: React.Dispatch<React.SetStateAction<{ teacher?: Teacher; type?: LessonType; note?: string }>>;
+  onSave: () => void | Promise<void>;
+  onCancel: () => void;
+  draft: Draft;
+}) {
+  return (
+    <>
+      <div className="mb-2 flex items-center justify-between text-sm">
+        <div className="text-xs text-neutral-500">{m2hm(draft.start)}–{m2hm(draft.end)}</div>
+      </div>
+      <div className="grid gap-2">
+        <label className="text-xs text-neutral-400">Педагог</label>
+        <select value={form.teacher ?? ""} onChange={(e) => setForm((f) => ({ ...f, teacher: e.target.value as Teacher }))} className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-2 py-2 text-sm outline-none focus:border-neutral-600">
+          <option value="" disabled>Выберите педагога</option>
+          {TEACHERS.map((t) => (<option key={t} value={t}>{t}</option>))}
+        </select>
+
+        <label className="mt-2 text-xs text-neutral-400">Тип</label>
+        <select value={form.type ?? ""} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as LessonType }))} className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-2 py-2 text-sm outline-none focus:border-neutral-600">
+          <option value="" disabled>Выберите тип</option>
+          {TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
+        </select>
+
+        <label className="mt-2 text-xs text-neutral-400">Заметка (опционально)</label>
+        <input type="text" maxLength={80} placeholder="Например: пробное, замена и т.п." value={form.note ?? ""} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-3 py-2 text-sm outline-none placeholder:text-neutral-500 focus:border-neutral-600" />
       </div>
 
-      <div data-kind="panel" ref={panelRef} className="pointer-events-auto absolute z-20 w-[280px] rounded-xl border border-neutral-700/70 bg-neutral-900/95 p-3 shadow-2xl backdrop-blur" style={{ top: panelTop, right: 12 }}>
-        <div className="mb-2 flex items-center justify-between text-sm">
-          <div className="font-medium text-neutral-200">Детали брони</div>
-          <div className="text-xs text-neutral-500">{m2hm(draft.start)}–{m2hm(draft.end)}</div>
-        </div>
-        <div className="grid gap-2">
-          <label className="text-xs text-neutral-400">Педагог</label>
-          <select value={form.teacher ?? ""} onChange={(e) => setForm((f) => ({ ...f, teacher: e.target.value as Teacher }))} className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-2 py-2 text-sm outline-none focus:border-neutral-600">
-            <option value="" disabled>Выберите педагога</option>
-            {TEACHERS.map((t) => (<option key={t} value={t}>{t}</option>))}
-          </select>
-
-          <label className="mt-2 text-xs text-neutral-400">Тип</label>
-          <select value={form.type ?? ""} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as LessonType }))} className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-2 py-2 text-sm outline-none focus:border-neutral-600">
-            <option value="" disabled>Выберите тип</option>
-            {TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
-          </select>
-
-          <label className="mt-2 text-xs text-neutral-400">Заметка (опционально)</label>
-          <input type="text" maxLength={80} placeholder="Например: пробное, замена и т.п." value={form.note ?? ""} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-3 py-2 text-sm outline-none placeholder:text-neutral-500 focus:border-neutral-600" />
-        </div>
-
-        <div className="mt-3 flex items-center gap-2">
-          <button onClick={onSave} disabled={!canSave} className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${canSave ? "bg-sky-500 text-white hover:bg-sky-400 active:scale-[.99]" : "cursor-not-allowed bg-neutral-700/70 text-neutral-300"}`} title={canSave ? "Сохранить бронь" : (!valid ? "Нельзя сохранить: пересечение или некорректная длительность" : "Выберите педагога и тип")}>
-            <Save className="h-4 w-4" /> Сохранить
-          </button>
-          <button onClick={onCancel} className="inline-flex items-center justify-center gap-2 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-200 hover:bg-neutral-800 active:scale-[.99]" title="Отменить черновик">
-            <X className="h-4 w-4" /> Отмена
-          </button>
-        </div>
+      <div className="mt-3 flex items-center gap-2">
+        <button onClick={onSave} disabled={!canSave} className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${canSave ? "bg-sky-500 text-white hover:bg-sky-400 active:scale-[.99]" : "cursor-not-allowed bg-neutral-700/70 text-neutral-300"}`}>
+          <Save className="h-4 w-4" /> Сохранить
+        </button>
+        <button onClick={onCancel} className="inline-flex items-center justify-center gap-2 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-200 hover:bg-neutral-800 active:scale-[.99]">
+          <X className="h-4 w-4" /> Отмена
+        </button>
       </div>
     </>
   );
@@ -546,13 +612,16 @@ function OverviewScreen({ date, setDate, bookings, onDelete }: { date: string; s
 
   const byRoom = useMemo(() => {
     const map: Record<Room, Booking[]> = { Белый: [], Серый: [], Черный: [] } as any;
-    bookings.filter((b) => b.date === date).sort((a, b) => a.start - b.start).forEach((b) => map[b.room].push(b));
+    bookings
+      .filter((b) => b.date === date)
+      .sort((a, b) => a.start - b.start)
+      .forEach((b) => map[b.room].push(b));
     return map;
   }, [bookings, date]);
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end см:justify-between">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-xl font-semibold">Занятость залов</h2>
           <p className="text-sm text-neutral-400">Выберите день, чтобы посмотреть текущие брони. Здесь можно удалять записи.</p>
@@ -599,7 +668,7 @@ function OverviewScreen({ date, setDate, bookings, onDelete }: { date: string; s
   );
 }
 
-// Мини-проверки
+// Мини-проверки в рантайме (не мешают сборке)
 (function runDevChecks() {
   try {
     console.assert(snapToStep(67, 15) === 60, "snapToStep 15->60");
