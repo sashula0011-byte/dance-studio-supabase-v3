@@ -596,24 +596,29 @@ function DraftBlock({
   }
 
   // Панорамирование расписания пальцем по телу черновика (вместо перетаскивания самого блока)
-  const panState = useRef<{ startY: number; startScroll: number } | null>(null);
+  const panState = useRef<{ startY: number; startScroll: number; moved: boolean } | null>(null);
   function onPanDown(e: React.PointerEvent) {
     e.stopPropagation();
     const el = gridRef.current; if (!el) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    panState.current = { startY: e.clientY, startScroll: el.scrollTop };
+    panState.current = { startY: e.clientY, startScroll: el.scrollTop, moved: false };
   }
   function onPanMove(e: React.PointerEvent) {
     if (!panState.current) return;
     const el = gridRef.current; if (!el) return;
     const dy = e.clientY - panState.current.startY;
+    if (Math.abs(dy) > 6) panState.current.moved = true;
     const max = el.scrollHeight - el.clientHeight;
     el.scrollTop = clamp(panState.current.startScroll - dy, 0, max);
   }
   function onPanUp(e: React.PointerEvent) {
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+    const wasTap = !!panState.current && !panState.current.moved;
     panState.current = null;
+    if (wasTap) setDetailsOpen(true);
   }
+
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const draftEl = (
     <div
@@ -627,11 +632,11 @@ function DraftBlock({
         <div className="font-medium">{m2hm(draft.start)}–{m2hm(draft.end)}</div>
         <div className="text-xs uppercase tracking-wide opacity-80">Черновик</div>
       </div>
-      <div className="mt-1 text-xs text-neutral-200/90">Перетащите, чтобы изменить время и длительность</div>
+      <div className="mt-1 text-xs text-neutral-200/90">Растягивайте за верх/низ; тело — прокрутка</div>
 
       <div
         role="separator"
-        className="absolute left-2 right-2 top-1 z-30 h-7 sm:h-5 cursor-ns-resize"
+        className=\"absolute inset-x-0 top-0 z-30 h-8 sm:h-6 cursor-ns-resize\"
         style={{ touchAction: "none" as any }}
         onPointerDown={(e) => { setActiveHandle("top"); buzz(); onPointerDown(e, "resize-top"); }}
         onPointerUp={() => setActiveHandle(null)}
@@ -641,7 +646,7 @@ function DraftBlock({
       </div>
       <div
         role="separator"
-        className="absolute left-2 right-2 bottom-1 z-30 h-7 sm:h-5 cursor-ns-resize"
+        className=\"absolute inset-x-0 bottom-0 z-30 h-8 sm:h-6 cursor-ns-resize\"
         style={{ touchAction: "none" as any }}
         onPointerDown={(e) => { setActiveHandle("bottom"); buzz(); onPointerDown(e, "resize-bottom"); }}
         onPointerUp={() => setActiveHandle(null)}
@@ -703,7 +708,7 @@ function DraftBlock({
     </>
   );
 
-  return (<>{draftEl}{isMobile ? mobilePanel : desktopPanel}</>);
+  return (<>{draftEl}{detailsOpen ? (isMobile ? mobilePanel : desktopPanel) : null}</>);
 }
 
 function PanelContent({ canSave, form, setForm, onSave, onCancel, draft }: {
