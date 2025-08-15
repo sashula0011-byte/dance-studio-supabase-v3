@@ -228,6 +228,7 @@ function AddScreen({
 }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [form, setForm] = useState<{ teacher?: Teacher; type?: LessonType; note?: string }>({});
+  const [saveErr, setSaveErr] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const isInsidePanel = (el: EventTarget | null) => !!(el as HTMLElement | null)?.closest?.('[data-kind="panel"]');
@@ -238,6 +239,7 @@ function AddScreen({
     // игнорим тапы по панели/её дочерним элементам (включая мобильный шит)
     if (isInsidePanel(e.target)) return;
     if ((e as any).button !== undefined && (e as any).button !== 0) return; // только primary button для мыши
+    setSaveErr(null);
     tapRef.current = { startX: e.clientX, startY: e.clientY, moved: false };
   }
   function onCanvasPointerMove(e: React.PointerEvent<HTMLDivElement>) {
@@ -284,7 +286,11 @@ function AddScreen({
     if (!draft) return false;
     const duration = draft.end - draft.start;
     if (duration < MIN_DURATION) return false;
-    for (const b of dayRoomBookings) if (overlaps(draft.start, draft.end, b.start, b.end)) return false;
+    for (const b of dayRoomBookings) {
+      // разрешаем касание по границе: [start,end) не пересекает [b.start,b.end) если end===b.start или start===b.end
+      if (draft.end === b.start || draft.start === b.end) continue;
+      if (overlaps(draft.start, draft.end, b.start, b.end)) return false;
+    }
     return true;
   }, [draft, dayRoomBookings]);
 
@@ -300,9 +306,14 @@ function AddScreen({
       type: form.type,
       note: form.note?.trim() || undefined,
     };
-    await onSaveBooking(booking);
-    setDraft(null);
-    setForm({});
+    try {
+      await onSaveBooking(booking);
+      setDraft(null);
+      setForm({});
+      setSaveErr(null);
+    } catch (e:any) {
+      setSaveErr(e?.message || "Не удалось сохранить запись");
+    }
   }
   function cancelDraft() { setDraft(null); setForm({}); }
 
@@ -541,7 +552,7 @@ function DraftBlock({
       className="pointer-events-auto absolute z-20 w-[280px] rounded-xl border border-neutral-700/70 bg-neutral-900/95 p-3 shadow-2xl backdrop-blur"
       style={{ top: panelTop, right: 12 }}
     >
-      <PanelContent canSave={canSave} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
+      <PanelContent canSave={canSave} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} error={saveErr} />
     </div>
   );
 
@@ -605,7 +616,7 @@ function DraftBlock({
 
 // --- содержимое панелей (общая часть) ---
 function PanelContent({
-  canSave, form, setForm, onSave, onCancel, draft
+  canSave, form, setForm, onSave, onCancel, draft, error
 }: {
   canSave: boolean;
   form: { teacher?: Teacher; type?: LessonType; note?: string };
@@ -613,6 +624,7 @@ function PanelContent({
   onSave: () => void | Promise<void>;
   onCancel: () => void;
   draft: Draft;
+  error?: string | null;
 }) {
   return (
     <>
@@ -635,6 +647,12 @@ function PanelContent({
         <label className="mt-2 text-xs text-neutral-400">Заметка (опционально)</label>
         <input type="text" maxLength={80} placeholder="Например: пробное, замена и т.п." value={form.note ?? ""} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-3 py-2 text-sm outline-none placeholder:text-neutral-500 focus:border-neutral-600" />
       </div>
+
+      {error && (
+        <div className="mt-3 rounded-md border border-rose-700/60 bg-rose-900/30 p-2 text-xs text-rose-200">
+          {error}
+        </div>
+      )}
 
       <div className="mt-3 flex items-center gap-2">
         <button onClick={onSave} disabled={!canSave} className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${canSave ? "bg-sky-500 text-white hover:bg-sky-400 active:scale-[.99]" : "cursor-not-allowed bg-neutral-700/70 text-neutral-300"}`}>
