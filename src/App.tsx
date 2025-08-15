@@ -16,17 +16,17 @@ import { supabase } from "./lib/supabase"; // может быть null/undefined
 /**
  * Танцевальная студия — бронирование залов (тёмная тема)
  *
- * Упрощённый вход:
+ * Упрощённый вход (только при первом заходе):
  * - На главном экране сначала только кнопка «Войти».
- * - Пользователь выбирает своё имя из списка педагогов (на каждый визит заново).
+ * - Пользователь выбирает своё имя из списка педагогов один раз за сессию.
+ * - После выбора имя сменить нельзя до обновления страницы.
  * - Имя автоматически подставляется как «Педагог» при создании черновика и пишется в user_name.
  * - Удалять можно только свои брони (сравнение по user_name на клиенте).
  * - «Впритык» (например, 10:00–11:00 и 11:00–12:00) разрешён.
  * - Мобильная панель деталей — компактный bottom-sheet и не перехватывает прокрутку/тапы по сетке.
  *
- * ВНИМАНИЕ: без реальной аутентификации сервер не может гарантировать,
- * что пользователь не удалит чужую бронь через прямой запрос.
- * Тут защита — только на уровне UI. Для строгой защиты вернём Supabase Auth + RLS.
+ * ВНИМАНИЕ: без реальной аутентификации сервер не может гарантировать права доступа.
+ * Для строгой защиты нужен Supabase Auth + RLS по user_id.
  */
 
 // Справочники
@@ -40,29 +40,28 @@ type Teacher = (typeof TEACHERS)[number];
 type LessonType = (typeof TYPES)[number];
 
 // Временная шкала и сетка
-const START_MIN = 7 * 60;  // 07:00
-const END_MIN = 24 * 60;   // 24:00
+const START_MIN = 7 * 60; // 07:00
+const END_MIN = 24 * 60; // 24:00
 const DAY_MIN = END_MIN - START_MIN;
 const PX_PER_MIN = 2;
-const SNAP = 10;               // шаг 10 минут
-const DEFAULT_DURATION = 60;   // по умолчанию 60 минут
-const MIN_DURATION = 15;       // минимальная длительность 15 минут
+const SNAP = 10; // шаг 10 минут
+const DEFAULT_DURATION = 60; // по умолчанию 60 минут
+const MIN_DURATION = 15; // минимальная длительность 15 минут
 
 // Модели
 interface Booking {
   id: string;
-  date: string;   // YYYY-MM-DD
+  date: string; // YYYY-MM-DD
   room: Room;
-  start: number;  // минуты от 00:00
-  end: number;    // минуты от 00:00
+  start: number; // минуты от 00:00
+  end: number; // минуты от 00:00
   teacher: Teacher;
   type: LessonType;
   note?: string;
   user_name?: string | null; // владелец по имени (упрощённая схема)
 }
 
-interface Draft
-  extends Omit<Booking, "id" | "teacher" | "type" | "user_name"> {
+interface Draft extends Omit<Booking, "id" | "teacher" | "type" | "user_name"> {
   teacher?: Teacher;
   type?: LessonType;
   id?: string; // временный id черновика
@@ -71,13 +70,10 @@ interface Draft
 // Утилиты
 const pad = (n: number) => String(n).padStart(2, "0");
 const m2hm = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
-const snapToStep = (mins: number, step = SNAP) =>
-  Math.round(mins / step) * step;
-const clamp = (n: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, n));
+const snapToStep = (mins: number, step = SNAP) => Math.round(mins / step) * step;
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 const genId = () => Math.random().toString(36).slice(2, 9);
-const overlaps = (aS: number, aE: number, bS: number, bE: number) =>
-  aS < bE && aE > bS; // полувключительные интервалы [aS,aE) и [bS,bE)
+const overlaps = (aS: number, aE: number, bS: number, bE: number) => aS < bE && aE > bS; // полувключительные интервалы [aS,aE) и [bS,bE)
 
 // Сегодня
 function dateTodayString() {
@@ -122,21 +118,14 @@ function useBookingsStore() {
     const sb = supabase!;
     const ch = sb
       .channel("bookings")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "bookings" },
-        (p: any) => setItems((prev) => upsertById(prev, p.new as Booking))
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "bookings" }, (p: any) =>
+        setItems((prev) => upsertById(prev, p.new as Booking))
       )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "bookings" },
-        (p: any) => setItems((prev) => upsertById(prev, p.new as Booking))
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "bookings" }, (p: any) =>
+        setItems((prev) => upsertById(prev, p.new as Booking))
       )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "bookings" },
-        (p: any) =>
-          setItems((prev) => prev.filter((x) => x.id !== p.old.id))
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "bookings" }, (p: any) =>
+        setItems((prev) => prev.filter((x) => x.id !== p.old.id))
       )
       .subscribe();
     return () => {
@@ -151,9 +140,7 @@ function useBookingsStore() {
     setLoading(true);
     setError(null);
     try {
-      let q = supabase!.from("bookings").select("*").order("start", {
-        ascending: true,
-      });
+      let q = supabase!.from("bookings").select("*").order("start", { ascending: true });
       if (date) q = q.eq("date", date);
       const { data, error } = await q;
       if (error) throw error;
@@ -170,11 +157,7 @@ function useBookingsStore() {
       setItems((prev) => upsertById(prev, b));
       return;
     }
-    const { error, data } = await supabase!
-      .from("bookings")
-      .insert(b)
-      .select()
-      .single();
+    const { error, data } = await supabase!.from("bookings").insert(b).select().single();
     if (error) throw error;
     setItems((prev) => upsertById(prev, data as Booking));
   }
@@ -206,16 +189,23 @@ export default function App() {
   const [route, setRoute] = useState<"home" | "add" | "overview">("home");
   const [date, setDate] = useState<string>(dateTodayString());
   const [room, setRoom] = useState<Room>("Белый");
-  const { items: bookings, loading, error, remote, loadDay, add, remove } =
-    useBookingsStore();
+  const { items: bookings, loading, error, remote, loadDay, add, remove } = useBookingsStore();
 
-  // Упрощённый вход: выбираем имя каждый визит
+  // Упрощённый вход: выбираем имя один раз за сессию
   const [sessionName, setSessionName] = useState<string | null>(null);
   const [showNameDialog, setShowNameDialog] = useState(false);
 
   useEffect(() => {
     loadDay(date);
   }, [date]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Если пользователь пытается попасть на экраны без имени — возвращаем на главную и предлагаем войти
+  useEffect(() => {
+    if (!sessionName && route !== "home") {
+      setRoute("home");
+      setShowNameDialog(true);
+    }
+  }, [sessionName, route]);
 
   return (
     <div className="min-h-screen bg-neutral-900 text-neutral-100 antialiased">
@@ -231,21 +221,13 @@ export default function App() {
             </button>
           )}
           <div className="ml-auto flex items-center gap-3 text-sm opacity-80">
-            <span
-              className={`rounded-md border px-2 py-0.5 text-xs ${
-                remote
-                  ? "border-emerald-600/40 text-emerald-300"
-                  : "border-neutral-600/40 text-neutral-300"
-              }`}
-            >
+            <span className={`rounded-md border px-2 py-0.5 text-xs ${remote ? "border-emerald-600/40 text-emerald-300" : "border-neutral-600/40 text-neutral-300"}`}>
               {remote ? "Supabase" : "Local"}
             </span>
           </div>
         </div>
         {error && (
-          <div className="mx-auto max-w-6xl px-4 pb-3 text-xs text-rose-400">
-            Ошибка: {error}
-          </div>
+          <div className="mx-auto max-w-6xl px-4 pb-3 text-xs text-rose-400">Ошибка: {error}</div>
         )}
       </header>
 
@@ -254,28 +236,24 @@ export default function App() {
           loggedIn={!!sessionName}
           currentName={sessionName}
           onLogin={() => setShowNameDialog(true)}
-          onChangeName={() => setShowNameDialog(true)}
           onAdd={() => setRoute("add")}
           onOverview={() => setRoute("overview")}
         />
       )}
 
-      {route === "add" && (
+      {route === "add" && sessionName && (
         <AddScreen
           date={date}
           setDate={setDate}
           room={room}
           setRoom={setRoom}
           bookings={bookings}
-          onSaveBooking={async (b) =>
-            add({ ...b, user_name: sessionName ?? undefined })
-          }
+          onSaveBooking={async (b) => add({ ...b, user_name: sessionName ?? undefined })}
           currentName={sessionName}
-          requireName={() => setShowNameDialog(true)}
         />
       )}
 
-      {route === "overview" && (
+      {route === "overview" && sessionName && (
         <OverviewScreen
           date={date}
           setDate={setDate}
@@ -283,7 +261,6 @@ export default function App() {
           onDelete={async (id) => remove(id)}
           currentUserName={sessionName}
           remote={remote}
-          requireName={() => setShowNameDialog(true)}
         />
       )}
 
@@ -294,7 +271,8 @@ export default function App() {
         </div>
       </footer>
 
-      {showNameDialog && (
+      {/* Диалог выбора имени — доступен ТОЛЬКО пока имя не выбрано */}
+      {showNameDialog && !sessionName && (
         <NameDialog
           onClose={() => setShowNameDialog(false)}
           onSave={(name) => {
@@ -312,25 +290,19 @@ function HomeScreen({
   loggedIn,
   currentName,
   onLogin,
-  onChangeName,
   onAdd,
   onOverview,
 }: {
   loggedIn: boolean;
   currentName: string | null;
   onLogin: () => void;
-  onChangeName: () => void;
   onAdd: () => void;
   onOverview: () => void;
 }) {
   return (
     <main className="mx-auto max-w-6xl px-4 py-12">
-      <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
-        Панель студии
-      </h1>
-      <p className="mt-2 text-neutral-400">
-        Сначала войдите, выбрав своё имя.
-      </p>
+      <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">Панель студии</h1>
+      <p className="mt-2 text-neutral-400">Сначала войдите, выбрав своё имя.</p>
 
       {!loggedIn ? (
         <div className="mt-8">
@@ -345,17 +317,9 @@ function HomeScreen({
         <>
           <div className="mt-6 flex items-center gap-3 text-neutral-300">
             <span>
-              Вы вошли как:{" "}
-              <span className="font-medium text-neutral-100">
-                {currentName}
-              </span>
+              Вы вошли как: <span className="font-medium text-neutral-100">{currentName}</span>
             </span>
-            <button
-              onClick={onChangeName}
-              className="rounded-lg border border-neutral-700 px-2 py-1 text-xs hover:bg-neutral-800"
-            >
-              Сменить
-            </button>
+            {/* Кнопку смены имени намеренно НЕ показываем — имя фиксируется на сессию */}
           </div>
           <div className="mt-8 grid gap-4 sm:grid-cols-2">
             <PrimaryCard
@@ -395,9 +359,7 @@ function PrimaryCard({
     >
       <div className="flex items-center justify-between">
         <div className="text-lg font-medium">{title}</div>
-        <div className="rounded-xl border border-neutral-700/60 bg-neutral-800/60 p-3">
-          {icon}
-        </div>
+        <div className="rounded-xl border border-neutral-700/60 bg-neutral-800/60 p-3">{icon}</div>
       </div>
       <p className="mt-3 text-sm text-neutral-400">{description}</p>
     </button>
@@ -413,7 +375,6 @@ function AddScreen({
   bookings,
   onSaveBooking,
   currentName,
-  requireName,
 }: {
   date: string;
   setDate: (v: string) => void;
@@ -422,24 +383,13 @@ function AddScreen({
   bookings: Booking[];
   onSaveBooking: (b: Booking) => void | Promise<void>;
   currentName: string | null;
-  requireName: () => void;
 }) {
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [form, setForm] = useState<{
-    teacher?: Teacher;
-    type?: LessonType;
-    note?: string;
-  }>({});
+  const [form, setForm] = useState<{ teacher?: Teacher; type?: LessonType; note?: string }>({});
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const isInsidePanel = (el: EventTarget | null) =>
-    !!(el as HTMLElement | null)?.closest?.('[data-kind="panel"]');
-
-  // если нет имени — сразу просим ввести
-  useEffect(() => {
-    if (!currentName) requireName();
-  }, [currentName, requireName]);
+  const isInsidePanel = (el: EventTarget | null) => !!(el as HTMLElement | null)?.closest?.('[data-kind="panel"]');
 
   // --- TAP vs SCROLL: черновик создаём только при коротком тапе без сдвига
   const tapRef = useRef<{ startX: number; startY: number; moved: boolean } | null>(null);
@@ -501,10 +451,8 @@ function AddScreen({
     const pad = 80;
     let newScroll = viewTop;
     if (top - pad < viewTop) newScroll = Math.max(0, top - pad);
-    if (bottom + pad > viewBottom)
-      newScroll = bottom + pad - scrollRef.current.clientHeight;
-    if (newScroll !== viewTop)
-      scrollRef.current.scrollTo({ top: newScroll, behavior: "smooth" });
+    if (bottom + pad > viewBottom) newScroll = bottom + pad - scrollRef.current.clientHeight;
+    if (newScroll !== viewTop) scrollRef.current.scrollTo({ top: newScroll, behavior: "smooth" });
   }, [draft]);
 
   const isDraftValid = useMemo(() => {
@@ -1067,7 +1015,6 @@ function OverviewScreen({
   onDelete,
   currentUserName,
   remote,
-  requireName,
 }: {
   date: string;
   setDate: (v: string) => void;
@@ -1075,14 +1022,9 @@ function OverviewScreen({
   onDelete: (id: string) => void | Promise<void>;
   currentUserName: string | null;
   remote: boolean;
-  requireName: () => void;
 }) {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!currentUserName) requireName();
-  }, [currentUserName, requireName]);
 
   const byRoom = useMemo(() => {
     const map: Record<Room, Booking[]> = {
@@ -1116,8 +1058,7 @@ function OverviewScreen({
         <div>
           <h2 className="text-xl font-semibold">Занятость залов</h2>
           <p className="text-sm text-neutral-400">
-            Выберите день, чтобы посмотреть текущие брони. Удалять можно только
-            свои.
+            Выберите день, чтобы посмотреть текущие брони. Удалять можно только свои.
           </p>
         </div>
         <div className="relative w-full sm:w-[260px]">
@@ -1139,10 +1080,7 @@ function OverviewScreen({
 
       <div className="grid gap-4 md:grid-cols-3">
         {ROOMS.map((r) => (
-          <div
-            key={r}
-            className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4"
-          >
+          <div key={r} className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4">
             <div className="mb-2 flex items-center justify-between">
               <div className="text-sm font-medium text-neutral-200">{r}</div>
             </div>
@@ -1160,9 +1098,7 @@ function OverviewScreen({
                           ? "border-neutral-700 bg-neutral-800/60 text-neutral-200"
                           : "border-neutral-800 bg-neutral-900/80 text-neutral-400"
                       }`}
-                      title={`${m2hm(b.start)}–${m2hm(b.end)} • ${b.teacher} • ${
-                        b.type
-                      }${b.note ? " — " + b.note : ""}`}
+                      title={`${m2hm(b.start)}–${m2hm(b.end)} • ${b.teacher} • ${b.type}${b.note ? " — " + b.note : ""}`}
                     >
                       <Clock3 className="h-3 w-3 opacity-70" /> {m2hm(b.start)}–
                       {m2hm(b.end)}
@@ -1230,7 +1166,7 @@ function OverviewScreen({
   );
 }
 
-// ===================== Диалог выбора имени =====================
+// ===================== Диалог выбора имени (показывается только до выбора) =====================
 function NameDialog({
   onClose,
   onSave,
