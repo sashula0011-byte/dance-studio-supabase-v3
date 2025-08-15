@@ -8,25 +8,17 @@ import {
   Eye,
   ArrowLeft,
   ChevronDown,
-  User as UserIcon,
-  Lock,
 } from "lucide-react";
 import { supabase } from "./lib/supabase"; // может быть null/undefined — в этом случае работаем в локальном режиме
 
 /**
  * Танцевальная студия — бронирование залов (тёмная тема)
  *
- * Упрощённый вход (только при первом заходе):
- * - На главном экране сначала только кнопка «Войти».
- * - Пользователь выбирает своё имя из списка педагогов один раз за сессию.
- * - После выбора имя сменить нельзя до обновления страницы.
- * - Имя автоматически подставляется как «Педагог» при создании черновика и пишется в user_name.
- * - Удалять можно только свои брони (сравнение по user_name на клиенте).
- * - «Впритык» (например, 10:00–11:00 и 11:00–12:00) разрешён.
- * - Мобильная панель деталей — компактный bottom-sheet и не перехватывает прокрутку/тапы по сетке.
- *
- * ВНИМАНИЕ: без реальной аутентификации сервер не может гарантировать права доступа.
- * Для строгой защиты нужен Supabase Auth + RLS по user_id.
+ * Вернулись к версии БЕЗ экрана выбора имени и без профиля.
+ * — Главный экран: две крупные кнопки — «Добавить занятие» и «Занятость залов».
+ * — В панели деталей «Педагог» и «Тип» выбираются вручную; без них нельзя сохранить.
+ * — Двухшаговое удаление в «Занятости залов» доступно всем.
+ * — «Впритык» разрешён, шаг сетки 10 минут, мобильная панель компактная.
  */
 
 // Справочники
@@ -53,15 +45,14 @@ interface Booking {
   id: string;
   date: string; // YYYY-MM-DD
   room: Room;
-  start: number; // минуты от 00:00
-  end: number; // минуты от 00:00
+  start: number;
+  end: number;
   teacher: Teacher;
   type: LessonType;
   note?: string;
-  user_name?: string | null; // владелец по имени (упрощённая схема)
 }
 
-interface Draft extends Omit<Booking, "id" | "teacher" | "type" | "user_name"> {
+interface Draft extends Omit<Booking, "id" | "teacher" | "type"> {
   teacher?: Teacher;
   type?: LessonType;
   id?: string; // временный id черновика
@@ -73,15 +64,13 @@ const m2hm = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const snapToStep = (mins: number, step = SNAP) => Math.round(mins / step) * step;
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 const genId = () => Math.random().toString(36).slice(2, 9);
-const overlaps = (aS: number, aE: number, bS: number, bE: number) => aS < bE && aE > bS; // полувключительные интервалы [aS,aE) и [bS,bE)
+const overlaps = (aS: number, aE: number, bS: number, bE: number) => aS < bE && aE > bS; // [aS,aE) vs [bS,bE)
 
-// Сегодня
 function dateTodayString() {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-// upsert: не допускать дублей при realtime + локальном добавлении
 function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
   const i = list.findIndex((x) => x.id === item.id);
   if (i === -1) return [...list, item];
@@ -95,93 +84,57 @@ function useBookingsStore() {
   const remote = !!supabase;
   const [items, setItems] = useState<Booking[]>(() => {
     if (remote) return [];
-    try {
-      const raw = localStorage.getItem("dance_bookings_v1");
-      if (raw) return JSON.parse(raw);
-    } catch {}
+    try { const raw = localStorage.getItem("dance_bookings_v1"); if (raw) return JSON.parse(raw); } catch {}
     return [];
   });
   const [loading, setLoading] = useState<boolean>(remote);
   const [error, setError] = useState<string | null>(null);
 
-  // локальный persist
   useEffect(() => {
     if (remote) return;
-    try {
-      localStorage.setItem("dance_bookings_v1", JSON.stringify(items));
-    } catch {}
+    try { localStorage.setItem("dance_bookings_v1", JSON.stringify(items)); } catch {}
   }, [items, remote]);
 
-  // realtime (Supabase)
   useEffect(() => {
     if (!remote || !supabase) return;
     const sb = supabase!;
     const ch = sb
       .channel("bookings")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "bookings" }, (p: any) =>
-        setItems((prev) => upsertById(prev, p.new as Booking))
-      )
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "bookings" }, (p: any) =>
-        setItems((prev) => upsertById(prev, p.new as Booking))
-      )
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "bookings" }, (p: any) =>
-        setItems((prev) => prev.filter((x) => x.id !== p.old.id))
-      )
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "bookings" }, (p: any) => setItems(prev => upsertById(prev, p.new as Booking)))
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "bookings" }, (p: any) => setItems(prev => upsertById(prev, p.new as Booking)))
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "bookings" }, (p: any) => setItems(prev => prev.filter(x => x.id !== p.old.id)))
       .subscribe();
-    return () => {
-      try {
-        sb.removeChannel(ch);
-      } catch {}
-    };
+    return () => { try { sb.removeChannel(ch); } catch {} };
   }, [remote]);
 
   async function loadDay(date?: string) {
     if (!remote || !supabase) return;
-    setLoading(true);
-    setError(null);
+    setLoading(true); setError(null);
     try {
       let q = supabase!.from("bookings").select("*").order("start", { ascending: true });
       if (date) q = q.eq("date", date);
       const { data, error } = await q;
       if (error) throw error;
       setItems((data ?? []) as Booking[]);
-    } catch (e: any) {
-      setError(e?.message || String(e));
-    } finally {
-      setLoading(false);
-    }
+    } catch (e:any) { setError(e?.message || String(e)); }
+    finally { setLoading(false); }
   }
 
   async function add(b: Booking) {
-    if (!remote || !supabase) {
-      setItems((prev) => upsertById(prev, b));
-      return;
-    }
+    if (!remote || !supabase) { setItems(prev => upsertById(prev, b)); return; }
     const { error, data } = await supabase!.from("bookings").insert(b).select().single();
     if (error) throw error;
-    setItems((prev) => upsertById(prev, data as Booking));
+    setItems(prev => upsertById(prev, data as Booking));
   }
 
   async function remove(id: string) {
-    if (!remote || !supabase) {
-      setItems((prev) => prev.filter((x) => x.id !== id));
-      return;
-    }
+    if (!remote || !supabase) { setItems(prev => prev.filter(x => x.id !== id)); return; }
     const { error } = await supabase!.from("bookings").delete().eq("id", id);
     if (error) throw error;
-    setItems((prev) => prev.filter((x) => x.id !== id));
+    setItems(prev => prev.filter(x => x.id !== id));
   }
 
-  return {
-    items,
-    setItems,
-    loading,
-    error,
-    remote,
-    loadDay,
-    add,
-    remove,
-  } as const;
+  return { items, setItems, loading, error, remote, loadDay, add, remove } as const;
 }
 
 // ===================== APP =====================
@@ -191,21 +144,7 @@ export default function App() {
   const [room, setRoom] = useState<Room>("Белый");
   const { items: bookings, loading, error, remote, loadDay, add, remove } = useBookingsStore();
 
-  // Упрощённый вход: выбираем имя один раз за сессию
-  const [sessionName, setSessionName] = useState<string | null>(null);
-  const [showNameDialog, setShowNameDialog] = useState(false);
-
-  useEffect(() => {
-    loadDay(date);
-  }, [date]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Если пользователь пытается попасть на экраны без имени — возвращаем на главную и предлагаем войти
-  useEffect(() => {
-    if (!sessionName && route !== "home") {
-      setRoute("home");
-      setShowNameDialog(true);
-    }
-  }, [sessionName, route]);
+  useEffect(() => { loadDay(date); }, [date]);
 
   return (
     <div className="min-h-screen bg-neutral-900 text-neutral-100 antialiased">
@@ -226,41 +165,33 @@ export default function App() {
             </span>
           </div>
         </div>
-        {error && (
-          <div className="mx-auto max-w-6xl px-4 pb-3 text-xs text-rose-400">Ошибка: {error}</div>
-        )}
+        {error && <div className="mx-auto max-w-6xl px-4 pb-3 text-xs text-rose-400">Ошибка: {error}</div>}
       </header>
 
       {route === "home" && (
         <HomeScreen
-          loggedIn={!!sessionName}
-          currentName={sessionName}
-          onLogin={() => setShowNameDialog(true)}
           onAdd={() => setRoute("add")}
           onOverview={() => setRoute("overview")}
         />
       )}
 
-      {route === "add" && sessionName && (
+      {route === "add" && (
         <AddScreen
           date={date}
           setDate={setDate}
           room={room}
           setRoom={setRoom}
           bookings={bookings}
-          onSaveBooking={async (b) => add({ ...b, user_name: sessionName ?? undefined })}
-          currentName={sessionName}
+          onSaveBooking={async (b) => add(b)}
         />
       )}
 
-      {route === "overview" && sessionName && (
+      {route === "overview" && (
         <OverviewScreen
           date={date}
           setDate={setDate}
           bookings={bookings}
           onDelete={async (id) => remove(id)}
-          currentUserName={sessionName}
-          remote={remote}
         />
       )}
 
@@ -270,93 +201,27 @@ export default function App() {
           <span>{remote ? "Общий календарь (Supabase)" : "Локальный режим"}</span>
         </div>
       </footer>
-
-      {/* Диалог выбора имени — доступен ТОЛЬКО пока имя не выбрано */}
-      {showNameDialog && !sessionName && (
-        <NameDialog
-          onClose={() => setShowNameDialog(false)}
-          onSave={(name) => {
-            setSessionName(name || null);
-            setShowNameDialog(false);
-          }}
-        />
-      )}
     </div>
   );
 }
 
 // ===================== Главный экран =====================
-function HomeScreen({
-  loggedIn,
-  currentName,
-  onLogin,
-  onAdd,
-  onOverview,
-}: {
-  loggedIn: boolean;
-  currentName: string | null;
-  onLogin: () => void;
-  onAdd: () => void;
-  onOverview: () => void;
-}) {
+function HomeScreen({ onAdd, onOverview }: { onAdd: () => void; onOverview: () => void }) {
   return (
     <main className="mx-auto max-w-6xl px-4 py-12">
       <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">Панель студии</h1>
-      <p className="mt-2 text-neutral-400">Сначала войдите, выбрав своё имя.</p>
-
-      {!loggedIn ? (
-        <div className="mt-8">
-          <button
-            onClick={onLogin}
-            className="w-full sm:w-auto rounded-2xl border border-neutral-700 bg-neutral-900/60 px-6 py-4 text-left text-lg hover:bg-neutral-800/60 active:scale-[.995]"
-          >
-            Войти
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="mt-6 flex items-center gap-3 text-neutral-300">
-            <span>
-              Вы вошли как: <span className="font-medium text-neutral-100">{currentName}</span>
-            </span>
-            {/* Кнопку смены имени намеренно НЕ показываем — имя фиксируется на сессию */}
-          </div>
-          <div className="mt-8 grid gap-4 sm:grid-cols-2">
-            <PrimaryCard
-              title="Добавить занятие"
-              icon={<Plus className="h-6 w-6" />}
-              onClick={onAdd}
-              description="Перейти к бронированию выбранного зала."
-            />
-            <PrimaryCard
-              title="Занятость залов"
-              icon={<Eye className="h-6 w-6" />}
-              onClick={onOverview}
-              description="Открыть обзор занятости по залам."
-            />
-          </div>
-        </>
-      )}
+      <p className="mt-2 text-neutral-400">Быстрое бронирование залов и обзор занятости.</p>
+      <div className="mt-8 grid gap-4 sm:grid-cols-2">
+        <PrimaryCard title="Добавить занятие" icon={<Plus className="h-6 w-6" />} onClick={onAdd} description="Перейти к бронированию выбранного зала." />
+        <PrimaryCard title="Занятость залов" icon={<Eye className="h-6 w-6" />} onClick={onOverview} description="Открыть обзор занятости по залам." />
+      </div>
     </main>
   );
 }
 
-function PrimaryCard({
-  title,
-  description,
-  icon,
-  onClick,
-}: {
-  title: string;
-  description: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-}) {
+function PrimaryCard({ title, description, icon, onClick }: { title: string; description: string; icon: React.ReactNode; onClick: () => void; }) {
   return (
-    <button
-      onClick={onClick}
-      className="group relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 text-left transition hover:border-neutral-700 hover:bg-neutral-800/60 active:scale-[.995]"
-    >
+    <button onClick={onClick} className="group relative overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900/60 p-6 text-left transition hover:border-neutral-700 hover:bg-neutral-800/60 active:scale-[.995]">
       <div className="flex items-center justify-between">
         <div className="text-lg font-medium">{title}</div>
         <div className="rounded-xl border border-neutral-700/60 bg-neutral-800/60 p-3">{icon}</div>
@@ -374,15 +239,10 @@ function AddScreen({
   setRoom,
   bookings,
   onSaveBooking,
-  currentName,
 }: {
-  date: string;
-  setDate: (v: string) => void;
-  room: Room;
-  setRoom: (r: Room) => void;
-  bookings: Booking[];
-  onSaveBooking: (b: Booking) => void | Promise<void>;
-  currentName: string | null;
+  date: string; setDate: (v: string) => void;
+  room: Room; setRoom: (r: Room) => void;
+  bookings: Booking[]; onSaveBooking: (b: Booking) => void | Promise<void>;
 }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [form, setForm] = useState<{ teacher?: Teacher; type?: LessonType; note?: string }>({});
@@ -391,8 +251,8 @@ function AddScreen({
 
   const isInsidePanel = (el: EventTarget | null) => !!(el as HTMLElement | null)?.closest?.('[data-kind="panel"]');
 
-  // --- TAP vs SCROLL: черновик создаём только при коротком тапе без сдвига
-  const tapRef = useRef<{ startX: number; startY: number; moved: boolean } | null>(null);
+  // --- TAP vs SCROLL: создаём черновик только при коротком тапе без сдвига
+  const tapRef = useRef<{ startX:number; startY:number; moved:boolean } | null>(null);
   function onCanvasPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (isInsidePanel(e.target)) return;
     if ((e as any).button !== undefined && (e as any).button !== 0) return; // только ЛКМ
@@ -406,14 +266,8 @@ function AddScreen({
     if (dx > 6 || dy > 6) tapRef.current.moved = true; // скролл/перетаскивание
   }
   function onCanvasPointerUp(e: React.PointerEvent<HTMLDivElement>) {
-    if (!tapRef.current || tapRef.current.moved) {
-      tapRef.current = null;
-      return;
-    }
-    if (isInsidePanel(e.target)) {
-      tapRef.current = null;
-      return;
-    }
+    if (!tapRef.current || tapRef.current.moved) { tapRef.current = null; return; }
+    if (isInsidePanel(e.target)) { tapRef.current = null; return; }
     const cont = scrollRef.current!;
     const rect = cont.getBoundingClientRect();
     const y = e.clientY - rect.top + cont.scrollTop;
@@ -425,23 +279,9 @@ function AddScreen({
     tapRef.current = null;
   }
 
-  // автоподстановка педагога = текущее имя (если оно есть в TEACHERS)
-  useEffect(() => {
-    if (!draft) return;
-    if (!form.teacher && currentName && (TEACHERS as readonly string[]).includes(currentName)) {
-      setForm((f) => ({ ...f, teacher: currentName as Teacher }));
-    }
-  }, [draft, currentName]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dayRoomBookings = useMemo(() => bookings.filter(b => b.date === date && b.room === room).sort((a,b)=>a.start-b.start), [bookings, date, room]);
 
-  const dayRoomBookings = useMemo(
-    () =>
-      bookings
-        .filter((b) => b.date === date && b.room === room)
-        .sort((a, b) => a.start - b.start),
-    [bookings, date, room]
-  );
-
-  // автопрокрутка к черновику (чтобы черновик и панель были видимы)
+  // автопрокрутка к черновику
   useEffect(() => {
     if (!draft || !scrollRef.current) return;
     const top = (draft.start - START_MIN) * PX_PER_MIN;
@@ -460,25 +300,23 @@ function AddScreen({
     const duration = draft.end - draft.start;
     if (duration < MIN_DURATION) return false;
     for (const b of dayRoomBookings) {
-      // разрешаем касание по границе
-      if (draft.end === b.start || draft.start === b.end) continue;
+      if (draft.end === b.start || draft.start === b.end) continue; // разрешаем «впритык»
       if (overlaps(draft.start, draft.end, b.start, b.end)) return false;
     }
     return true;
   }, [draft, dayRoomBookings]);
 
   async function saveDraft() {
-    if (!draft || !isDraftValid || !currentName || !form.type) return;
+    if (!draft || !isDraftValid || !form.teacher || !form.type) return;
     const booking: Booking = {
       id: (crypto as any)?.randomUUID?.() ?? genId(),
       date: draft.date,
       room: draft.room,
       start: draft.start,
       end: draft.end,
-      teacher: currentName as Teacher,
+      teacher: form.teacher,
       type: form.type,
       note: form.note?.trim() || undefined,
-      user_name: currentName ?? undefined,
     };
     try {
       await onSaveBooking(booking);
@@ -489,28 +327,15 @@ function AddScreen({
       setSaveErr(e?.message || "Не удалось сохранить запись");
     }
   }
-  function cancelDraft() {
-    setDraft(null);
-    setForm({});
-  }
+  function cancelDraft() { setDraft(null); setForm({}); }
 
   type DragMode = null | "move" | "resize-top" | "resize-bottom";
-  const dragState = useRef<{
-    mode: DragMode;
-    startY: number;
-    startStart: number;
-    startEnd: number;
-  } | null>(null);
+  const dragState = useRef<{ mode: DragMode; startY: number; startStart: number; startEnd: number; } | null>(null);
 
   function onDraftPointerDown(e: React.PointerEvent, mode: DragMode) {
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    dragState.current = {
-      mode,
-      startY: e.clientY,
-      startStart: draft!.start,
-      startEnd: draft!.end,
-    };
+    dragState.current = { mode, startY: e.clientY, startStart: draft!.start, startEnd: draft!.end };
   }
   function onDraftPointerMove(e: React.PointerEvent) {
     if (!dragState.current || !draft) return;
@@ -534,12 +359,7 @@ function AddScreen({
     }
   }
   function onDraftPointerUp(e: React.PointerEvent) {
-    if (dragState.current) {
-      try {
-        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-      } catch {}
-      dragState.current = null;
-    }
+    if (dragState.current) { try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {} ; dragState.current = null; }
   }
 
   const columnHeight = DAY_MIN * PX_PER_MIN;
@@ -550,35 +370,18 @@ function AddScreen({
         <LabeledField label="Дата">
           <div className="relative">
             <CalendarIcon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500" />
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="w-full rounded-xl border border-neutral-700 bg-neutral-800/80 px-9 py-2 text-sm outline-none ring-0 focus:border-neutral-600"
-            />
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full rounded-xl border border-neutral-700 bg-neutral-800/80 px-9 py-2 text-sm outline-none ring-0 focus:border-neutral-600" />
           </div>
         </LabeledField>
         <LabeledField label="Зал">
           <div className="relative">
             <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500" />
-            <select
-              value={room}
-              onChange={(e) => setRoom(e.target.value as Room)}
-              className="w-full appearance-none rounded-xl border border-neutral-700 bg-neutral-800/80 px-3 py-2 pr-9 text-sm outline-none focus:border-neutral-600"
-            >
-              {ROOMS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
+            <select value={room} onChange={(e) => setRoom(e.target.value as Room)} className="w-full appearance-none rounded-xl border border-neutral-700 bg-neutral-800/80 px-3 py-2 pr-9 text-sm outline-none focus:border-neutral-600">
+              {ROOMS.map((r) => (<option key={r} value={r}>{r}</option>))}
             </select>
           </div>
         </LabeledField>
-        <div className="flex items-end">
-          <div className="text-xs text-neutral-500">
-            В режиме добавления показывается только выбранный зал.
-          </div>
-        </div>
+        <div className="flex items-end"><div className="text-xs text-neutral-500">В режиме добавления показывается только выбранный зал.</div></div>
       </div>
 
       <div className="relative rounded-2xl border border-neutral-800 bg-neutral-900/60">
@@ -586,39 +389,22 @@ function AddScreen({
           <div className="px-2 py-2 text-xs text-neutral-500">Время</div>
           <div className="flex items-center justify-between px-3 py-2 text-sm text-neutral-300">
             <div className="font-medium">Зал: {room}</div>
-            <div className="text-neutral-500">
-              Тап/клик — черновик на 60 минут. Перетягивайте для коррекции.
-            </div>
+            <div className="text-neutral-500">Тап/клик — черновик на 60 минут. Перетягивайте для коррекции.</div>
           </div>
         </div>
 
-        <div
-          ref={scrollRef}
-          className="relative h-[62vh] overflow-y-auto"
-          onPointerDown={onCanvasPointerDown}
-          onPointerMove={onCanvasPointerMove}
-          onPointerUp={onCanvasPointerUp}
-        >
+        <div ref={scrollRef} className="relative h-[62vh] overflow-y-auto" onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
           <div className="grid grid-cols-[72px_1fr]" style={{ height: columnHeight }}>
             {/* Левая колонка времени и пунктирная сетка */}
-            <div
-              className="relative border-r border-neutral-800"
-              style={{
-                backgroundImage:
-                  "repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0, rgba(255,255,255,0.06) 1px, transparent 1px, transparent 20px)",
-              }}
-            >
+            <div className="relative border-r border-neutral-800" style={{ backgroundImage: "repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0, rgba(255,255,255,0.06) 1px, transparent 1px, transparent 20px)" }}>
               {Array.from({ length: (END_MIN - START_MIN) / 60 + 1 }).map((_, i) => {
-                const hm = START_MIN + i * 60;
-                const top = (hm - START_MIN) * PX_PER_MIN;
+                const hm = START_MIN + i * 60; const top = (hm - START_MIN) * PX_PER_MIN;
                 return (
                   <div key={i} className="absolute left-0 right-0" style={{ top }}>
                     <div className="border-t border-dashed border-neutral-700/70" />
                     <div className="absolute left-0 right-0 -translate-y-1/2">
                       <div className="flex items-center gap-2 px-2">
-                        <div className="w-12 text-right text-xs text-neutral-400 tabular-nums">
-                          {m2hm(hm)}
-                        </div>
+                        <div className="w-12 text-right text-xs text-neutral-400 tabular-nums">{m2hm(hm)}</div>
                       </div>
                     </div>
                   </div>
@@ -627,27 +413,14 @@ function AddScreen({
             </div>
 
             {/* Колонка зала с той же сеткой */}
-            <div
-              className="relative"
-              style={{
-                backgroundImage:
-                  "repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0, rgba(255,255,255,0.06) 1px, transparent 1px, transparent 20px)",
-              }}
-            >
+            <div className="relative" style={{ backgroundImage: "repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0, rgba(255,255,255,0.06) 1px, transparent 1px, transparent 20px)" }}>
               {Array.from({ length: (END_MIN - START_MIN) / 60 + 1 }).map((_, i) => {
-                const hm = START_MIN + i * 60;
-                const top = (hm - START_MIN) * PX_PER_MIN;
-                return (
-                  <div key={i} className="absolute left-0 right-0" style={{ top }}>
-                    <div className="border-t border-dashed border-neutral-700/70" />
-                  </div>
-                );
+                const hm = START_MIN + i * 60; const top = (hm - START_MIN) * PX_PER_MIN;
+                return (<div key={i} className="absolute left-0 right-0" style={{ top }}><div className="border-t border-dashed border-neutral-700/70" /></div>);
               })}
 
               {/* Сохранённые брони */}
-              {dayRoomBookings.map((b) => (
-                <Block key={b.id} booking={b} />
-              ))}
+              {dayRoomBookings.map((b) => (<Block key={b.id} booking={b} />))}
 
               {/* Черновик */}
               {draft && (
@@ -662,7 +435,6 @@ function AddScreen({
                   setForm={setForm}
                   onSave={saveDraft}
                   onCancel={cancelDraft}
-                  currentName={currentName}
                 />
               )}
             </div>
@@ -670,27 +442,15 @@ function AddScreen({
         </div>
       </div>
 
-      {saveErr && (
-        <div className="mt-3 rounded-lg border border-rose-700/60 bg-rose-900/30 p-2 text-xs text-rose-200">
-          {saveErr}
-        </div>
-      )}
+      {saveErr && <div className="mt-3 rounded-lg border border-rose-700/60 bg-rose-900/30 p-2 text-xs text-rose-200">{saveErr}</div>}
     </main>
   );
 }
 
-function LabeledField({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function LabeledField({ label, children }: { label: string; children: React.ReactNode; }) {
   return (
     <label className="block">
-      <div className="mb-1 text-xs uppercase tracking-wide text-neutral-400">
-        {label}
-      </div>
+      <div className="mb-1 text-xs uppercase tracking-wide text-neutral-400">{label}</div>
       {children}
     </label>
   );
@@ -704,22 +464,13 @@ function Block({ booking }: { booking: Booking }) {
       data-kind="block"
       className="pointer-events-none absolute left-3 right-3 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3 py-2 text-sm"
       style={{ top, height }}
-      title={`${booking.room} • ${m2hm(booking.start)}–${m2hm(
-        booking.end
-      )} • ${booking.teacher} • ${booking.type}${
-        booking.note ? " — " + booking.note : ""
-      }`}
+      title={`${booking.room} • ${m2hm(booking.start)}–${m2hm(booking.end)} • ${booking.teacher} • ${booking.type}${booking.note ? " — " + booking.note : ""}`}
     >
       <div className="flex items-center justify-between text-emerald-200/90">
-        <div className="font-medium">
-          {m2hm(booking.start)}–{m2hm(booking.end)}
-        </div>
+        <div className="font-medium">{m2hm(booking.start)}–{m2hm(booking.end)}</div>
         <div className="text-xs">{booking.type}</div>
       </div>
-      <div className="mt-1 text-xs text-emerald-100/80">
-        {booking.teacher}
-        {booking.note ? ` · ${booking.note}` : ""}
-      </div>
+      <div className="mt-1 text-xs text-emerald-100/80">{booking.teacher}{booking.note ? ` · ${booking.note}` : ""}</div>
     </div>
   );
 }
@@ -727,7 +478,6 @@ function Block({ booking }: { booking: Booking }) {
 function DraftBlock({
   draft,
   valid,
-  currentName,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -739,23 +489,17 @@ function DraftBlock({
 }: {
   draft: Draft;
   valid: boolean;
-  onPointerDown: (
-    e: React.PointerEvent,
-    mode: "move" | "resize-top" | "resize-bottom"
-  ) => void;
+  onPointerDown: (e: React.PointerEvent, mode: "move" | "resize-top" | "resize-bottom") => void;
   onPointerMove: (e: React.PointerEvent) => void;
   onPointerUp: (e: React.PointerEvent) => void;
   gridRef: React.RefObject<HTMLDivElement>;
   form: { teacher?: Teacher; type?: LessonType; note?: string };
-  setForm: React.Dispatch<
-    React.SetStateAction<{ teacher?: Teacher; type?: LessonType; note?: string }>
-  >;
+  setForm: React.Dispatch<React.SetStateAction<{ teacher?: Teacher; type?: LessonType; note?: string }>>;
   onSave: () => void | Promise<void>;
   onCancel: () => void;
-  currentName: string | null;
 }) {
   const top = (draft.start - START_MIN) * PX_PER_MIN;
-  const height = (draft.end - draft.start) * PX_P
+  const height = (draft.end - draft.start) * PX_PER_MIN;
 
   // детект мобилы
   const [isMobile, setIsMobile] = useState(false);
@@ -767,16 +511,14 @@ function DraftBlock({
     return () => mq.removeEventListener("change", cb);
   }, []);
 
-  // позиционирование панели (desktop: сбоку от черновика, мобила — bottom-sheet)
+  // позиционирование панели (desktop) рядом с черновиком
   const [panelTop, setPanelTop] = useState<number>(0);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   useEffect(() => {
-    const el = gridRef.current;
-    if (!el) return;
+    const el = gridRef.current; if (!el) return;
     const handler = () => setScrollTop(el.scrollTop);
-    handler();
-    el.addEventListener("scroll", handler, { passive: true } as any);
+    handler(); el.addEventListener("scroll", handler, { passive: true } as any);
     return () => el.removeEventListener("scroll", handler as any);
   }, [gridRef]);
 
@@ -790,74 +532,34 @@ function DraftBlock({
     setPanelTop(scrollTop + clampedTop);
   }, [top, height, scrollTop, gridRef, isMobile]);
 
-  const canSave = valid && !!currentName && !!form.type;
+  const canSave = valid && !!form.teacher && !!form.type;
 
-  // Черновик
   const draftEl = (
     <div
       data-kind="block"
-      className={`absolute left-3 right-3 select-none rounded-lg border px-3 py-2 text-sm shadow-lg ${
-        valid
-          ? "border-sky-400/40 bg-sky-400/10"
-          : "border-rose-500/50 bg-rose-500/10"
-      }`}
+      className={`absolute left-3 right-3 select-none rounded-lg border px-3 py-2 text-sm shadow-lg ${valid ? "border-sky-400/40 bg-sky-400/10" : "border-rose-500/50 bg-rose-500/10"}`}
       style={{ top, height, touchAction: "none" as any }}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
     >
       <div className="flex items-center justify-between text-sky-200/90">
-        <div className="font-medium">
-          {m2hm(draft.start)}–{m2hm(draft.end)}
-        </div>
-        <div className="text-xs uppercase tracking-wide opacity-80">
-          Черновик
-        </div>
+        <div className="font-medium">{m2hm(draft.start)}–{m2hm(draft.end)}</div>
+        <div className="text-xs uppercase tracking-wide opacity-80">Черновик</div>
       </div>
-      <div className="mt-1 text-xs text-neutral-200/90">
-        Перетащите, чтобы изменить время и длительность
-      </div>
+      <div className="mt-1 text-xs text-neutral-200/90">Перетащите, чтобы изменить время и длительность</div>
 
-      <div
-        role="separator"
-        className="absolute inset-x-2 top-0 -translate-y-1/2 cursor-ns-resize rounded-full border border-sky-400/50 bg-sky-400/30 p-1"
-        onPointerDown={(e) => onPointerDown(e, "resize-top")}
-        title="Растянуть сверху"
-      />
-      <div
-        role="separator"
-        className="absolute inset-x-2 bottom-0 translate-y-1/2 cursor-ns-resize rounded-full border border-sky-400/50 bg-sky-400/30 p-1"
-        onPointerDown={(e) => onPointerDown(e, "resize-bottom")}
-        title="Растянуть снизу"
-      />
-      <div
-        className="absolute inset-0 cursor-grab active:cursor-grabbing"
-        onPointerDown={(e) => onPointerDown(e, "move")}
-        title="Перетащить"
-      />
+      <div role="separator" className="absolute inset-x-2 top-0 -translate-y-1/2 cursor-ns-resize rounded-full border border-sky-400/50 bg-sky-400/30 p-1" onPointerDown={(e) => onPointerDown(e, "resize-top")} title="Растянуть сверху" />
+      <div role="separator" className="absolute inset-x-2 bottom-0 translate-y-1/2 cursor-ns-resize rounded-full border border-sky-400/50 bg-sky-400/30 p-1" onPointerDown={(e) => onPointerDown(e, "resize-bottom")} title="Растянуть снизу" />
+      <div className="absolute inset-0 cursor-grab active:cursor-grabbing" onPointerDown={(e) => onPointerDown(e, "move")} title="Перетащить" />
     </div>
   );
 
-  // Панель (desktop)
   const desktopPanel = (
-    <div
-      data-kind="panel"
-      ref={panelRef}
-      className="pointer-events-auto absolute z-20 w-[280px] rounded-xl border border-neutral-700/70 bg-neutral-900/95 p-3 shadow-2xl backdrop-blur"
-      style={{ top: panelTop, right: 12 }}
-    >
-      <PanelContent
-        canSave={canSave}
-        form={form}
-        setForm={setForm}
-        onSave={onSave}
-        onCancel={onCancel}
-        draft={draft}
-        currentName={currentName}
-      />
+    <div data-kind="panel" ref={panelRef} className="pointer-events-auto absolute z-20 w-[280px] rounded-xl border border-neutral-700/70 bg-neutral-900/95 p-3 shadow-2xl backdrop-blur" style={{ top: panelTop, right: 12 }}>
+      <PanelContent canSave={canSave} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
     </div>
   );
 
-  // Панель (mobile bottom-sheet): глушим pointer события, чтобы тапы по select не “пробивали” сетку
   const [minimized, setMinimized] = useState(false);
   const mobilePanel = (
     <>
@@ -873,22 +575,9 @@ function DraftBlock({
             <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-neutral-700/80" />
             <div className="mb-2 flex items-center justify-between text-sm">
               <div className="font-medium text-neutral-200">Детали брони</div>
-              <button
-                onClick={() => setMinimized(true)}
-                className="text-xs text-neutral-400 underline underline-offset-4"
-              >
-                Свернуть
-              </button>
+              <button onClick={() => setMinimized(true)} className="text-xs text-neutral-400 underline underline-offset-4">Свернуть</button>
             </div>
-            <PanelContent
-        canSave={canSave}
-        form={form}
-        setForm={setForm}
-        onSave={onSave}
-        onCancel={onCancel}
-        draft={draft}
-        currentName={currentName}
-      />
+            <PanelContent canSave={canSave} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
           </div>
         </div>
       )}
@@ -908,93 +597,44 @@ function DraftBlock({
     </>
   );
 
-  return (
-    <>
-      {draftEl}
-      {isMobile ? mobilePanel : desktopPanel}
-    </>
-  );
+  return (<>{draftEl}{isMobile ? mobilePanel : desktopPanel}</>);
 }
 
-// Общая форма панели
-function PanelContent({
-  canSave,
-  form,
-  setForm,
-  onSave,
-  onCancel,
-  draft,
-  currentName,
-}: {
+function PanelContent({ canSave, form, setForm, onSave, onCancel, draft }: {
   canSave: boolean;
   form: { teacher?: Teacher; type?: LessonType; note?: string };
-  setForm: React.Dispatch<
-    React.SetStateAction<{ teacher?: Teacher; type?: LessonType; note?: string }>
-  >;
+  setForm: React.Dispatch<React.SetStateAction<{ teacher?: Teacher; type?: LessonType; note?: string }>>;
   onSave: () => void | Promise<void>;
   onCancel: () => void;
   draft: Draft;
-  currentName: string | null;
 }) {
   return (
     <>
       <div className="mb-2 flex items-center justify-between text-sm">
-        <div className="text-xs text-neutral-500">
-          {m2hm(draft.start)}–{m2hm(draft.end)}
-        </div>
+        <div className="text-xs text-neutral-500">{m2hm(draft.start)}–{m2hm(draft.end)}</div>
       </div>
       <div className="grid gap-2">
         <label className="text-xs text-neutral-400">Педагог</label>
-        <div className="w-full rounded-lg border border-neutral-700 bg-neutral-800/60 px-3 py-2 text-sm text-neutral-200 flex items-center justify-between">
-          <span>{currentName}</span>
-          <Lock className="h-3.5 w-3.5 opacity-70" />
-        </div>
+        <select value={form.teacher ?? ""} onChange={(e) => setForm((f) => ({ ...f, teacher: e.target.value as Teacher }))} className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-2 py-2 text-sm outline-none focus:border-neutral-600">
+          <option value="" disabled>Выберите педагога</option>
+          {TEACHERS.map((t) => (<option key={t} value={t}>{t}</option>))}
+        </select>
 
         <label className="mt-2 text-xs text-neutral-400">Тип</label>
-        <select
-          value={form.type ?? ""}
-          onChange={(e) =>
-            setForm((f) => ({ ...f, type: e.target.value as LessonType }))
-          }
-          className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-2 py-2 text-sm outline-none focus:border-neutral-600"
-        >
-          <option value="" disabled>
-            Выберите тип
-          </option>
-          {TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
+        <select value={form.type ?? ""} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as LessonType }))} className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-2 py-2 text-sm outline-none focus:border-neutral-600">
+          <option value="" disabled>Выберите тип</option>
+          {TYPES.map((t) => (<option key={t} value={t}>{t}</option>))}
         </select>
 
         <label className="mt-2 text-xs text-neutral-400">Заметка (опционально)</label>
-        <input
-          type="text"
-          maxLength={80}
-          placeholder="Например: пробное, замена и т.п."
-          value={form.note ?? ""}
-          onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
-          className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-3 py-2 text-sm outline-none placeholder:text-neutral-500 focus:border-neutral-600"
-        />
+        <input type="text" maxLength={80} placeholder="Например: пробное, замена и т.п." value={form.note ?? ""} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-3 py-2 text-sm outline-none placeholder:text-neutral-500 focus:border-neutral-600" />
       </div>
 
       <div className="mt-3 flex items-center gap-2">
-        <button
-          onClick={onSave}
-          disabled={!canSave}
-          className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
-            canSave
-              ? "bg-sky-500 text-white hover:bg-sky-400 active:scale-[.99]"
-              : "cursor-not-allowed bg-neutral-700/70 text-neutral-300"
-          }`}
-        >
+        <button onClick={onSave} disabled={!canSave} className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${canSave ? "bg-sky-500 text-white hover:bg-sky-400 active:scale-[.99]" : "cursor-not-allowed bg-neutral-700/70 text-neutral-300"}`}>
           <Save className="h-4 w-4" /> Сохранить
         </button>
-        <button
-          onClick={onCancel}
-          className="inline-flex items-center justify-center gap-2 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-200 hover:bg-neutral-800 active:scale-[.99]"
-        >
+        <button onClick={onCancel} className="inline-flex items-center justify-center gap-2 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-200 hover:bg-neutral-800 active:scale-[.99]">
           <X className="h-4 w-4" /> Отмена
         </button>
       </div>
@@ -1003,48 +643,19 @@ function PanelContent({
 }
 
 // ===================== Экран «Занятость залов» =====================
-function OverviewScreen({
-  date,
-  setDate,
-  bookings,
-  onDelete,
-  currentUserName,
-  remote,
-}: {
-  date: string;
-  setDate: (v: string) => void;
-  bookings: Booking[];
-  onDelete: (id: string) => void | Promise<void>;
-  currentUserName: string | null;
-  remote: boolean;
-}) {
+function OverviewScreen({ date, setDate, bookings, onDelete }: { date: string; setDate: (v: string) => void; bookings: Booking[]; onDelete: (id: string) => void | Promise<void>; }) {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
 
   const byRoom = useMemo(() => {
-    const map: Record<Room, Booking[]> = {
-      Белый: [],
-      Серый: [],
-      Черный: [],
-    } as any;
-    bookings
-      .filter((b) => b.date === date)
-      .sort((a, b) => a.start - b.start)
-      .forEach((b) => map[b.room].push(b));
+    const map: Record<Room, Booking[]> = { Белый: [], Серый: [], Черный: [] } as any;
+    bookings.filter((b) => b.date === date).sort((a, b) => a.start - b.start).forEach((b) => map[b.room].push(b));
     return map;
   }, [bookings, date]);
 
-  function isOwner(b: Booking) {
-    return b.user_name && currentUserName && b.user_name === currentUserName;
-  }
-
   async function confirmDelete(id: string) {
     setDeleteErr(null);
-    try {
-      await onDelete(id);
-    } catch (e: any) {
-      setDeleteErr(e?.message || "Не удалось удалить запись");
-    }
+    try { await onDelete(id); } catch (e: any) { setDeleteErr(e?.message || "Не удалось удалить запись"); }
   }
 
   return (
@@ -1052,86 +663,59 @@ function OverviewScreen({
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-xl font-semibold">Занятость залов</h2>
-          <p className="text-sm text-neutral-400">
-            Выберите день, чтобы посмотреть текущие брони. Удалять можно только свои.
-          </p>
+          <p className="text-sm text-neutral-400">Выберите день, чтобы посмотреть текущие брони.</p>
         </div>
         <div className="relative w-full sm:w-[260px]">
           <CalendarIcon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500" />
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="w-full rounded-xl border border-neutral-700 bg-neutral-800/80 px-9 py-2 text-sm outline-none focus:border-neutral-600"
-          />
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full rounded-xl border border-neutral-700 bg-neutral-800/80 px-9 py-2 text-sm outline-none focus:border-neutral-600" />
         </div>
       </div>
 
-      {deleteErr && (
-        <div className="mb-3 rounded-lg border border-rose-700/60 bg-rose-900/30 p-2 text-xs text-rose-200">
-          {deleteErr}
-        </div>
-      )}
+      {deleteErr && <div className="mb-3 rounded-lg border border-rose-700/60 bg-rose-900/30 p-2 text-xs text-rose-200">{deleteErr}</div>}
 
       <div className="grid gap-4 md:grid-cols-3">
         {ROOMS.map((r) => (
           <div key={r} className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-medium text-neutral-200">{r}</div>
-            </div>
+            <div className="mb-2 flex items-center justify-between"><div className="text-sm font-medium text-neutral-200">{r}</div></div>
             {byRoom[r].length === 0 ? (
               <div className="text-sm text-neutral-500">Нет броней</div>
             ) : (
               <div className="flex flex-wrap gap-2">
-                {byRoom[r].map((b) => {
-                  const owner = isOwner(b);
-                  return (
-                    <span
-                      key={b.id}
-                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${
-                        owner
-                          ? "border-neutral-700 bg-neutral-800/60 text-neutral-200"
-                          : "border-neutral-800 bg-neutral-900/80 text-neutral-400"
-                      }`}
-                      title={`${m2hm(b.start)}–${m2hm(b.end)} • ${b.teacher} • ${b.type}${b.note ? " — " + b.note : ""}`}
-                    >
-                      <Clock3 className="h-3 w-3 opacity-70" /> {m2hm(b.start)}–
-                      {m2hm(b.end)}
-                      <span className="opacity-70">•</span>
-                      <span>{b.teacher}</span>
-                      <span className="opacity-70">•</span>
-                      <span className="text-neutral-300">{b.type}</span>
-                      {owner ? (
-                        pendingDeleteId === b.id ? (
-                          <span className="ml-2 inline-flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                await confirmDelete(b.id);
-                                setPendingDeleteId(null);
-                              }}
-                              className="inline-flex items-center rounded-md border border-rose-600 px-2 py-[2px] text-[10px] hover:bg-rose-700/30"
-                              title="Подтвердить удаление"
-                            >
-                              Да
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPendingDeleteId(null);
-                              }}
-                              className="inline-flex items-center rounded-md border border-neutral-600 px-2 py-[2px] text-[10px] hover:bg-neutral-700/50"
-                              title="Отмена удаления"
-                            >
-                              Нет
-                            </button>
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPendingDeleteId(b.id);
+                {byRoom[r].map((b) => (
+                  <span key={b.id} className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs border-neutral-700 bg-neutral-800/60 text-neutral-200" title={`${m2hm(b.start)}–${m2hm(b.end)} • ${b.teacher} • ${b.type}${b.note ? " — " + b.note : ""}`}>
+                    <Clock3 className="h-3 w-3 opacity-70" /> {m2hm(b.start)}–{m2hm(b.end)}
+                    <span className="opacity-70">•</span><span>{b.teacher}</span>
+                    <span className="opacity-70">•</span><span className="text-neutral-300">{b.type}</span>
+                    {pendingDeleteId === b.id ? (
+                      <span className="ml-2 inline-flex items-center gap-1">
+                        <button type="button" onClick={async (e) => { e.stopPropagation(); await confirmDelete(b.id); setPendingDeleteId(null); }} className="inline-flex items-center rounded-md border border-rose-600 px-2 py-[2px] text-[10px] hover:bg-rose-700/30" title="Подтвердить удаление">Да</button>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); setPendingDeleteId(null); }} className="inline-flex items-center rounded-md border border-neutral-600 px-2 py-[2px] text-[10px] hover:bg-neutral-700/50" title="Отмена удаления">Нет</button>
+                      </span>
+                    ) : (
+                      <button type="button" onClick={(e) => { e.stopPropagation(); setPendingDeleteId(b.id); }} className="ml-1 inline-flex items-center rounded-md border border-neutral-600 px-1 py-[2px] text-[10px] hover:bg-neutral-700" title="Удалить бронь">
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </main>
+  );
+}
+
+// ===================== Runtime-проверки =====================
+(function runDevChecks() {
+  try {
+    console.assert(snapToStep(67, 15) === 60, "snapToStep 15->60");
+    console.assert(snapToStep(74, 15) === 75, "snapToStep 15->75");
+    console.assert(clamp(5, 10, 20) === 10, "clamp lower");
+    console.assert(clamp(25, 10, 20) === 20, "clamp upper");
+    console.assert(snapToStep(67) === 70, "default 10min -> 70");
+    console.assert(m2hm(START_MIN) === "07:00", "start label");
+  } catch (e) { console.warn("Dev checks failed:", e); }
+})();
 
