@@ -248,6 +248,8 @@ function AddScreen({
   const [form, setForm] = useState<{ teacher?: Teacher; type?: LessonType; note?: string }>({});
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Какой край черновика сейчас в фокусе для автопрокрутки (null, resize-top, resize-bottom, move)
+  const scrollFocusMode = useRef<"move" | "resize-top" | "resize-bottom" | null>(null);
 
   const isInsidePanel = (el: EventTarget | null) => !!(el as HTMLElement | null)?.closest?.('[data-kind="panel"]');
 
@@ -281,18 +283,39 @@ function AddScreen({
 
   const dayRoomBookings = useMemo(() => bookings.filter(b => b.date === date && b.room === room).sort((a,b)=>a.start-b.start), [bookings, date, room]);
 
-  // автопрокрутка к черновику
+  // автопрокрутка к черновику (умная):
+  // • при растяжении снизу держим в кадре НИЖНЮЮ ручку
+  // • при растяжении сверху — ВЕРХНЮЮ
+  // • при создании — стараемся показать низ черновика
   useEffect(() => {
     if (!draft || !scrollRef.current) return;
+    const cont = scrollRef.current;
     const top = (draft.start - START_MIN) * PX_PER_MIN;
     const bottom = (draft.end - START_MIN) * PX_PER_MIN;
-    const viewTop = scrollRef.current.scrollTop;
-    const viewBottom = viewTop + scrollRef.current.clientHeight;
+    const viewTop = cont.scrollTop;
+    const viewBottom = viewTop + cont.clientHeight;
     const pad = 80;
+    const mode = scrollFocusMode.current;
+
     let newScroll = viewTop;
-    if (top - pad < viewTop) newScroll = Math.max(0, top - pad);
-    if (bottom + pad > viewBottom) newScroll = bottom + pad - scrollRef.current.clientHeight;
-    if (newScroll !== viewTop) scrollRef.current.scrollTo({ top: newScroll, behavior: "smooth" });
+
+    if (mode === "resize-top") {
+      if (top < viewTop + pad) newScroll = Math.max(0, top - pad);
+    } else if (mode === "resize-bottom") {
+      if (bottom > viewBottom - pad) newScroll = bottom + pad - cont.clientHeight;
+    } else if (mode === "move") {
+      const mid = (top + bottom) / 2;
+      if (mid < viewTop + pad) newScroll = Math.max(0, mid - pad);
+      else if (mid > viewBottom - pad) newScroll = mid + pad - cont.clientHeight;
+    } else {
+      // нет активного ресайза — только что создали или изменили время
+      if (bottom > viewBottom - pad) newScroll = bottom + pad - cont.clientHeight;
+      else if (top < viewTop + pad) newScroll = Math.max(0, top - pad);
+    }
+
+    if (newScroll !== viewTop) {
+      cont.scrollTo({ top: newScroll, behavior: mode ? "auto" : "smooth" });
+    }
   }, [draft]);
 
   const isDraftValid = useMemo(() => {
@@ -335,7 +358,15 @@ function AddScreen({
   function onDraftPointerDown(e: React.PointerEvent, mode: DragMode) {
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    dragState.current = { mode, startY: e.clientY, startStart: draft!.start, startEnd: draft!.end };
+    dragState.current = {
+      mode,
+      startY: e.clientY,
+      startStart: draft!.start,
+      startEnd: draft!.end,
+    };
+    // направляем авто-прокрутку следить за активной ручкой
+    scrollFocusMode.current = mode;
+  };
   }
   function onDraftPointerMove(e: React.PointerEvent) {
     if (!dragState.current || !draft) return;
@@ -359,7 +390,13 @@ function AddScreen({
     }
   }
   function onDraftPointerUp(e: React.PointerEvent) {
-    if (dragState.current) { try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {} ; dragState.current = null; }
+    if (dragState.current) {
+      try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+      dragState.current = null;
+    }
+    // сбрасываем фокус автопрокрутки
+    scrollFocusMode.current = null;
+  } catch {} ; dragState.current = null; }
   }
 
   const columnHeight = DAY_MIN * PX_PER_MIN;
@@ -534,6 +571,26 @@ function DraftBlock({
 
   const canSave = valid && !!form.teacher && !!form.type;
 
+  // Панорамирование расписания пальцем по телу черновика (вместо перетаскивания самого блока)
+  const panState = useRef<{ startY: number; startScroll: number } | null>(null);
+  function onPanDown(e: React.PointerEvent) {
+    e.stopPropagation();
+    const el = gridRef.current; if (!el) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    panState.current = { startY: e.clientY, startScroll: el.scrollTop };
+  }
+  function onPanMove(e: React.PointerEvent) {
+    if (!panState.current) return;
+    const el = gridRef.current; if (!el) return;
+    const dy = e.clientY - panState.current.startY;
+    const max = el.scrollHeight - el.clientHeight;
+    el.scrollTop = clamp(panState.current.startScroll - dy, 0, max);
+  }
+  function onPanUp(e: React.PointerEvent) {
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+    panState.current = null;
+  }
+
   const draftEl = (
     <div
       data-kind="block"
@@ -563,9 +620,12 @@ function DraftBlock({
         title="Растянуть снизу"
       />
       <div
-        className="absolute inset-x-0 top-4 bottom-4 z-10 cursor-grab active:cursor-grabbing"
-        onPointerDown={(e) => onPointerDown(e, "move")}
-        title="Перетащить"
+        className="absolute inset-x-0 top-4 bottom-4 z-10 cursor-default"
+        style={{ touchAction: "none" as any }}
+        onPointerDown={onPanDown}
+        onPointerMove={onPanMove}
+        onPointerUp={onPanUp}
+        title="Прокрутка расписания"
       />
     </div>
   );
