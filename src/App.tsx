@@ -468,14 +468,14 @@ function AddScreen({
   }, [draft, dayRoomBookings]);
 
   async function saveDraft() {
-    if (!draft || !isDraftValid || !form.teacher || !form.type) return;
+    if (!draft || !isDraftValid || !currentName || !form.type) return;
     const booking: Booking = {
       id: (crypto as any)?.randomUUID?.() ?? genId(),
       date: draft.date,
       room: draft.room,
       start: draft.start,
       end: draft.end,
-      teacher: form.teacher,
+      teacher: currentName as Teacher,
       type: form.type,
       note: form.note?.trim() || undefined,
       user_name: currentName ?? undefined,
@@ -662,6 +662,7 @@ function AddScreen({
                   setForm={setForm}
                   onSave={saveDraft}
                   onCancel={cancelDraft}
+                  currentName={currentName}
                 />
               )}
             </div>
@@ -726,6 +727,7 @@ function Block({ booking }: { booking: Booking }) {
 function DraftBlock({
   draft,
   valid,
+  currentName,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -736,6 +738,22 @@ function DraftBlock({
   onCancel,
 }: {
   draft: Draft;
+  valid: boolean;
+  onPointerDown: (
+    e: React.PointerEvent,
+    mode: "move" | "resize-top" | "resize-bottom"
+  ) => void;
+  onPointerMove: (e: React.PointerEvent) => void;
+  onPointerUp: (e: React.PointerEvent) => void;
+  gridRef: React.RefObject<HTMLDivElement>;
+  form: { teacher?: Teacher; type?: LessonType; note?: string };
+  setForm: React.Dispatch<
+    React.SetStateAction<{ teacher?: Teacher; type?: LessonType; note?: string }>
+  >;
+  onSave: () => void | Promise<void>;
+  onCancel: () => void;
+  currentName: string | null;
+}) {
   valid: boolean;
   onPointerDown: (
     e: React.PointerEvent,
@@ -787,7 +805,7 @@ function DraftBlock({
     setPanelTop(scrollTop + clampedTop);
   }, [top, height, scrollTop, gridRef, isMobile]);
 
-  const canSave = valid && !!form.teacher && !!form.type;
+  const canSave = valid && !!currentName && !!form.type;
 
   // Черновик
   const draftEl = (
@@ -849,6 +867,7 @@ function DraftBlock({
         onSave={onSave}
         onCancel={onCancel}
         draft={draft}
+        currentName={currentName}
       />
     </div>
   );
@@ -877,13 +896,14 @@ function DraftBlock({
               </button>
             </div>
             <PanelContent
-              canSave={canSave}
-              form={form}
-              setForm={setForm}
-              onSave={onSave}
-              onCancel={onCancel}
-              draft={draft}
-            />
+        canSave={canSave}
+        form={form}
+        setForm={setForm}
+        onSave={onSave}
+        onCancel={onCancel}
+        draft={draft}
+        currentName={currentName}
+      />
           </div>
         </div>
       )}
@@ -919,6 +939,7 @@ function PanelContent({
   onSave,
   onCancel,
   draft,
+  currentName,
 }: {
   canSave: boolean;
   form: { teacher?: Teacher; type?: LessonType; note?: string };
@@ -928,6 +949,7 @@ function PanelContent({
   onSave: () => void | Promise<void>;
   onCancel: () => void;
   draft: Draft;
+  currentName: string | null;
 }) {
   return (
     <>
@@ -938,22 +960,10 @@ function PanelContent({
       </div>
       <div className="grid gap-2">
         <label className="text-xs text-neutral-400">Педагог</label>
-        <select
-          value={form.teacher ?? ""}
-          onChange={(e) =>
-            setForm((f) => ({ ...f, teacher: e.target.value as Teacher }))
-          }
-          className="w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-2 py-2 text-sm outline-none focus:border-neutral-600"
-        >
-          <option value="" disabled>
-            Выберите педагога
-          </option>
-          {TEACHERS.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+        <div className="w-full rounded-lg border border-neutral-700 bg-neutral-800/60 px-3 py-2 text-sm text-neutral-200 flex items-center justify-between">
+          <span>{currentName}</span>
+          <Lock className="h-3.5 w-3.5 opacity-70" />
+        </div>
 
         <label className="mt-2 text-xs text-neutral-400">Тип</label>
         <select
