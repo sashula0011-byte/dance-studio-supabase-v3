@@ -573,6 +573,28 @@ function DraftBlock({
 
   const canSave = valid && !!form.teacher && !!form.type;
 
+  // Haptics/visual feedback when grabbing a handle
+  const [activeHandle, setActiveHandle] = useState<"top"|"bottom"|null>(null);
+  function buzz() {
+    try { (navigator as any).vibrate?.(10); } catch {}
+    if (!(navigator as any).vibrate) {
+      try {
+        const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+        if (Ctx) {
+          const ctx = new Ctx();
+          const o = ctx.createOscillator();
+          const g = ctx.createGain();
+          o.type = "square";
+          o.frequency.value = 140;
+          g.gain.value = 0.02;
+          o.connect(g); g.connect(ctx.destination);
+          o.start();
+          setTimeout(() => { o.stop(); ctx.close(); }, 25);
+        }
+      } catch {}
+    }
+  }
+
   // Панорамирование расписания пальцем по телу черновика (вместо перетаскивания самого блока)
   const panState = useRef<{ startY: number; startScroll: number } | null>(null);
   function onPanDown(e: React.PointerEvent) {
@@ -599,7 +621,7 @@ function DraftBlock({
       className={`absolute left-3 right-3 select-none rounded-lg border px-3 py-2 text-sm shadow-lg ${valid ? "border-sky-400/40 bg-sky-400/10" : "border-rose-500/50 bg-rose-500/10"}`}
       style={{ top, height, touchAction: "none" as any }}
       onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
+      onPointerUp={(e) => { onPointerUp(e); setActiveHandle(null); }}
     >
       <div className="flex items-center justify-between text-sky-200/90">
         <div className="font-medium">{m2hm(draft.start)}–{m2hm(draft.end)}</div>
@@ -609,21 +631,23 @@ function DraftBlock({
 
       <div
         role="separator"
-        className="absolute left-2 right-2 top-0 -translate-y-1/2 z-20 h-8 sm:h-6 cursor-ns-resize"
+        className="absolute left-2 right-2 top-1 z-30 h-7 sm:h-5 cursor-ns-resize"
         style={{ touchAction: "none" as any }}
-        onPointerDown={(e) => onPointerDown(e, "resize-top")}
+        onPointerDown={(e) => { setActiveHandle("top"); buzz(); onPointerDown(e, "resize-top"); }}
+        onPointerUp={() => setActiveHandle(null)}
         title="Растянуть сверху"
       >
-        <div className="mx-auto h-1.5 sm:h-1 w-full rounded-full border border-sky-400/50 bg-sky-400/30" />
+        <div className={`mx-auto h-[3px] sm:h-[2px] w-full rounded-full border ${activeHandle === "top" ? "bg-sky-400/60 border-sky-300" : "bg-sky-400/30 border-sky-400/50"}`} />
       </div>
       <div
         role="separator"
-        className="absolute left-2 right-2 bottom-0 translate-y-1/2 z-20 h-8 sm:h-6 cursor-ns-resize"
+        className="absolute left-2 right-2 bottom-1 z-30 h-7 sm:h-5 cursor-ns-resize"
         style={{ touchAction: "none" as any }}
-        onPointerDown={(e) => onPointerDown(e, "resize-bottom")}
+        onPointerDown={(e) => { setActiveHandle("bottom"); buzz(); onPointerDown(e, "resize-bottom"); }}
+        onPointerUp={() => setActiveHandle(null)}
         title="Растянуть снизу"
       >
-        <div className="mx-auto h-1.5 sm:h-1 w-full rounded-full border border-sky-400/50 bg-sky-400/30" />
+        <div className={`mx-auto h-[3px] sm:h-[2px] w-full rounded-full border ${activeHandle === "bottom" ? "bg-sky-400/60 border-sky-300" : "bg-sky-400/30 border-sky-400/50"}`} />
       </div>
       <div
         className="absolute inset-x-0 top-4 bottom-4 z-10 cursor-default"
