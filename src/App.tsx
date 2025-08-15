@@ -705,41 +705,24 @@ function DraftBlock({
     </div>
   );
 
-  const [minimized, setMinimized] = useState(false);
+  // minimized UI removed — open by tapping draft body, close via "Свернуть"
   const mobilePanel = (
-    <>
-      {!minimized && (
-        <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-auto">
-          <div
-            data-kind="panel"
-            onPointerDownCapture={(e) => e.stopPropagation()}
-            onPointerUpCapture={(e) => e.stopPropagation()}
-            onPointerMoveCapture={(e) => e.stopPropagation()}
-            className="mx-auto max-w-md rounded-t-2xl border border-neutral-700/70 bg-neutral-900/95 shadow-2xl backdrop-blur p-3 pb-[env(safe-area-inset-bottom)] h-[50vh] overflow-y-auto"
-          >
-            <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-neutral-700/80" />
-            <div className="mb-2 flex items-center justify-between text-sm">
-              <div className="font-medium text-neutral-200">Детали брони</div>
-              <button onClick={() => setMinimized(true)} className="text-xs text-neutral-400 underline underline-offset-4">Свернуть</button>
-            </div>
-            <PanelContent canSave={valid && !!form.teacher && !!form.type} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
-          </div>
+    <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-auto">
+      <div
+        data-kind="panel"
+        onPointerDownCapture={(e) => e.stopPropagation()}
+        onPointerUpCapture={(e) => e.stopPropagation()}
+        onPointerMoveCapture={(e) => e.stopPropagation()}
+        className="mx-auto max-w-md rounded-t-2xl border border-neutral-700/70 bg-neutral-900/95 shadow-2xl backdrop-blur p-3 pb-[env(safe-area-inset-bottom)] h-[50vh] overflow-y-auto"
+      >
+        <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-neutral-700/80" />
+        <div className="mb-2 flex items-center justify-between text-sm">
+          <div className="font-medium text-neutral-200">Детали брони</div>
+          <button onClick={() => setDetailsOpen(false)} className="text-xs text-neutral-400 underline underline-offset-4">Свернуть</button>
         </div>
-      )}
-      {minimized && (
-        <button
-          data-kind="panel"
-          onPointerDownCapture={(e) => e.stopPropagation()}
-          onPointerUpCapture={(e) => e.stopPropagation()}
-          onPointerMoveCapture={(e) => e.stopPropagation()}
-          className="fixed bottom-3 right-3 z-40 rounded-full border border-neutral-700 bg-neutral-900/90 px-4 py-2 text-sm text-neutral-200 shadow-lg"
-          onClick={() => setMinimized(false)}
-          aria-label="Открыть детали"
-        >
-          Детали
-        </button>
-      )}
-    </>
+        <PanelContent canSave={valid && !!form.teacher && !!form.type} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
+      </div>
+    </div>
   );
 
   return (
