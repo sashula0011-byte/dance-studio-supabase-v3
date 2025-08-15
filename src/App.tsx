@@ -365,8 +365,8 @@ function AddScreen({
   const columnHeight = DAY_MIN * PX_PER_MIN;
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-6">
-      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <main className="mx-auto max-w-6xl px-4 sm:py-6 py-3">
+      <div className="mb-2 sm:mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <LabeledField label="Дата">
           <div className="relative">
             <CalendarIcon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500" />
@@ -393,7 +393,7 @@ function AddScreen({
           </div>
         </div>
 
-        <div ref={scrollRef} className="relative h-[62vh] overflow-y-auto" onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
+        <div ref={scrollRef} className="relative h-[68vh] sm:h-[62vh] overflow-y-auto" onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
           <div className="grid grid-cols-[72px_1fr]" style={{ height: columnHeight }}>
             {/* Левая колонка времени и пунктирная сетка */}
             <div className="relative border-r border-neutral-800" style={{ backgroundImage: "repeating-linear-gradient(to bottom, rgba(255,255,255,0.06) 0, rgba(255,255,255,0.06) 1px, transparent 1px, transparent 20px)" }}>
@@ -548,9 +548,25 @@ function DraftBlock({
       </div>
       <div className="mt-1 text-xs text-neutral-200/90">Перетащите, чтобы изменить время и длительность</div>
 
-      <div role="separator" className="absolute inset-x-2 top-0 -translate-y-1/2 cursor-ns-resize rounded-full border border-sky-400/50 bg-sky-400/30 p-1" onPointerDown={(e) => onPointerDown(e, "resize-top")} title="Растянуть сверху" />
-      <div role="separator" className="absolute inset-x-2 bottom-0 translate-y-1/2 cursor-ns-resize rounded-full border border-sky-400/50 bg-sky-400/30 p-1" onPointerDown={(e) => onPointerDown(e, "resize-bottom")} title="Растянуть снизу" />
-      <div className="absolute inset-0 cursor-grab active:cursor-grabbing" onPointerDown={(e) => onPointerDown(e, "move")} title="Перетащить" />
+      <div
+        role="separator"
+        className="absolute left-2 right-2 top-0 -translate-y-1/2 h-7 sm:h-5 cursor-ns-resize z-20 rounded-md border border-sky-400/50 bg-sky-400/30"
+        style={{ touchAction: "none" as any }}
+        onPointerDown={(e) => onPointerDown(e, "resize-top")}
+        title="Растянуть сверху"
+      />
+      <div
+        role="separator"
+        className="absolute left-2 right-2 bottom-0 translate-y-1/2 h-7 sm:h-5 cursor-ns-resize z-20 rounded-md border border-sky-400/50 bg-sky-400/30"
+        style={{ touchAction: "none" as any }}
+        onPointerDown={(e) => onPointerDown(e, "resize-bottom")}
+        title="Растянуть снизу"
+      />
+      <div
+        className="absolute inset-x-0 top-4 bottom-4 z-10 cursor-grab active:cursor-grabbing"
+        onPointerDown={(e) => onPointerDown(e, "move")}
+        title="Перетащить"
+      />
     </div>
   );
 
