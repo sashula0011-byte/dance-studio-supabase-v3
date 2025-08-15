@@ -540,7 +540,7 @@ function DraftBlock({
   const top = (draft.start - START_MIN) * PX_PER_MIN;
   const height = (draft.end - draft.start) * PX_PER_MIN;
 
-  // детект мобилы
+  // мобильный брейкпоинт
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 640px)");
@@ -550,7 +550,7 @@ function DraftBlock({
     return () => mq.removeEventListener("change", cb);
   }, []);
 
-  // позиционирование панели (desktop) рядом с черновиком
+  // позиция панели (desktop)
   const [panelTop, setPanelTop] = useState<number>(0);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -571,31 +571,34 @@ function DraftBlock({
     setPanelTop(scrollTop + clampedTop);
   }, [top, height, scrollTop, gridRef, isMobile]);
 
-  const canSave = valid && !!form.teacher && !!form.type;
+  // панель деталей — открывать только по тапу по телу
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
-  // Haptics/visual feedback when grabbing a handle
-  const [activeHandle, setActiveHandle] = useState<"top"|"bottom"|null>(null);
+  // активная ручка (для подсветки)
+  const [activeHandle, setActiveHandle] = useState<"top" | "bottom" | null>(null);
+
+  // лёгкий haptics + фолбэк-тихий "тик"
   function buzz() {
-    try { (navigator as any).vibrate?.(10); } catch {}
+    try { (navigator as any).vibrate?.(12); } catch {}
     if (!(navigator as any).vibrate) {
       try {
         const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
         if (Ctx) {
           const ctx = new Ctx();
-          const o = ctx.createOscillator();
-          const g = ctx.createGain();
-          o.type = "square";
-          o.frequency.value = 140;
-          g.gain.value = 0.02;
-          o.connect(g); g.connect(ctx.destination);
-          o.start();
-          setTimeout(() => { o.stop(); ctx.close(); }, 25);
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "square";
+          osc.frequency.value = 150;
+          gain.gain.value = 0.02;
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start();
+          setTimeout(() => { osc.stop(); ctx.close(); }, 22);
         }
       } catch {}
     }
   }
 
-  // Панорамирование расписания пальцем по телу черновика (вместо перетаскивания самого блока)
+  // панорамирование расписания пальцем по телу (вместо перемещения блока)
   const panState = useRef<{ startY: number; startScroll: number; moved: boolean } | null>(null);
   function onPanDown(e: React.PointerEvent) {
     e.stopPropagation();
@@ -618,42 +621,49 @@ function DraftBlock({
     if (wasTap) setDetailsOpen(true);
   }
 
-  const [detailsOpen, setDetailsOpen] = useState(false);
-
+  // сам черновик
   const draftEl = (
     <div
       data-kind="block"
-      className={`absolute left-3 right-3 select-none rounded-lg border px-3 py-2 text-sm shadow-lg ${valid ? "border-sky-400/40 bg-sky-400/10" : "border-rose-500/50 bg-rose-500/10"}`}
+      className={`absolute left-3 right-3 select-none rounded-lg border px-3 text-sm shadow-lg ${valid ? "border-sky-400/40 bg-sky-400/10" : "border-rose-500/50 bg-rose-500/10"}`}
       style={{ top, height, touchAction: "none" as any }}
       onPointerMove={onPointerMove}
       onPointerUp={(e) => { onPointerUp(e); setActiveHandle(null); }}
     >
-      <div className="flex items-center justify-between text-sky-200/90">
-        <div className="font-medium">{m2hm(draft.start)}–{m2hm(draft.end)}</div>
-        <div className="text-xs uppercase tracking-wide opacity-80">Черновик</div>
-      </div>
-      <div className="mt-1 text-xs text-neutral-200/90">Растягивайте за верх/низ; тело — прокрутка</div>
-
+      {/* Верхняя ручка — РОВНО по верхней границе */}
       <div
         role="separator"
-        className=\"absolute inset-x-0 top-0 z-30 h-8 sm:h-6 cursor-ns-resize\"
+        className="absolute inset-x-0 top-0 z-30 h-8 sm:h-6 cursor-ns-resize"
         style={{ touchAction: "none" as any }}
         onPointerDown={(e) => { setActiveHandle("top"); buzz(); onPointerDown(e, "resize-top"); }}
         onPointerUp={() => setActiveHandle(null)}
         title="Растянуть сверху"
       >
-        <div className={`mx-auto h-[3px] sm:h-[2px] w-full rounded-full border ${activeHandle === "top" ? "bg-sky-400/60 border-sky-300" : "bg-sky-400/30 border-sky-400/50"}`} />
+        <div className={`absolute inset-x-2 top-0 h-[4px] sm:h-[3px] rounded-full border ${activeHandle === "top" ? "bg-sky-400/60 border-sky-300" : "bg-sky-400/30 border-sky-400/50"}`} />
       </div>
+
+      {/* Нижняя ручка — РОВНО по нижней границе */}
       <div
         role="separator"
-        className=\"absolute inset-x-0 bottom-0 z-30 h-8 sm:h-6 cursor-ns-resize\"
+        className="absolute inset-x-0 bottom-0 z-30 h-8 sm:h-6 cursor-ns-resize"
         style={{ touchAction: "none" as any }}
         onPointerDown={(e) => { setActiveHandle("bottom"); buzz(); onPointerDown(e, "resize-bottom"); }}
         onPointerUp={() => setActiveHandle(null)}
         title="Растянуть снизу"
       >
-        <div className={`mx-auto h-[3px] sm:h-[2px] w-full rounded-full border ${activeHandle === "bottom" ? "bg-sky-400/60 border-sky-300" : "bg-sky-400/30 border-sky-400/50"}`} />
+        <div className={`absolute inset-x-2 bottom-0 h-[4px] sm:h-[3px] rounded-full border ${activeHandle === "bottom" ? "bg-sky-400/60 border-sky-300" : "bg-sky-400/30 border-sky-400/50"}`} />
       </div>
+
+      {/* Контент блока — с отступами сверху/снизу, чтобы не заезжать на ручки */}
+      <div className="pointer-events-none mt-2 mb-2">
+        <div className="flex items-center justify-between text-sky-200/90">
+          <div className="font-medium">{m2hm(draft.start)}–{m2hm(draft.end)}</div>
+          <div className="text-xs uppercase tracking-wide opacity-80">Черновик</div>
+        </div>
+        <div className="mt-1 text-xs text-neutral-200/90">Растягивайте за верх/низ; тело — прокрутка</div>
+      </div>
+
+      {/* Зона панорамирования (тело) — НЕ двигает бронь */}
       <div
         className="absolute inset-x-0 top-4 bottom-4 z-10 cursor-default"
         style={{ touchAction: "none" as any }}
@@ -666,8 +676,13 @@ function DraftBlock({
   );
 
   const desktopPanel = (
-    <div data-kind="panel" ref={panelRef} className="pointer-events-auto absolute z-20 w-[280px] rounded-xl border border-neutral-700/70 bg-neutral-900/95 p-3 shadow-2xl backdrop-blur" style={{ top: panelTop, right: 12 }}>
-      <PanelContent canSave={canSave} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
+    <div
+      data-kind="panel"
+      ref={panelRef}
+      className="pointer-events-auto absolute z-20 w-[280px] rounded-xl border border-neutral-700/70 bg-neutral-900/95 p-3 shadow-2xl backdrop-blur"
+      style={{ top: panelTop, right: 12 }}
+    >
+      <PanelContent canSave={valid && !!form.teacher && !!form.type} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
     </div>
   );
 
@@ -688,7 +703,7 @@ function DraftBlock({
               <div className="font-medium text-neutral-200">Детали брони</div>
               <button onClick={() => setMinimized(true)} className="text-xs text-neutral-400 underline underline-offset-4">Свернуть</button>
             </div>
-            <PanelContent canSave={canSave} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
+            <PanelContent canSave={valid && !!form.teacher && !!form.type} form={form} setForm={setForm} onSave={onSave} onCancel={onCancel} draft={draft} />
           </div>
         </div>
       )}
@@ -708,7 +723,12 @@ function DraftBlock({
     </>
   );
 
-  return (<>{draftEl}{detailsOpen ? (isMobile ? mobilePanel : desktopPanel) : null}</>);
+  return (
+    <>
+      {draftEl}
+      {detailsOpen ? (isMobile ? mobilePanel : desktopPanel) : null}
+    </>
+  );
 }
 
 function PanelContent({ canSave, form, setForm, onSave, onCancel, draft }: {
