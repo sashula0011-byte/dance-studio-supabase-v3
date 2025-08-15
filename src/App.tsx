@@ -573,6 +573,18 @@ function DraftBlock({
 
   // панель деталей — открывать только по тапу по телу
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Hint: fade-in + auto-hide while details are closed
+  const [hintShown, setHintShown] = useState(false);
+  useEffect(() => {
+    if (!detailsOpen) {
+      setHintShown(false);
+      const showT = setTimeout(() => setHintShown(true), 20);      // smooth fade-in
+      const hideT = setTimeout(() => setHintShown(false), 2800);   // auto-hide after ~2.8s
+      return () => { clearTimeout(showT); clearTimeout(hideT); };
+    } else {
+      setHintShown(false);
+    }
+  }, [detailsOpen, draft.id]);
 
   // активная ручка (для подсветки)
   const [activeHandle, setActiveHandle] = useState<"top" | "bottom" | null>(null);
