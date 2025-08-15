@@ -23,8 +23,8 @@ import { supabase } from "./lib/supabase"; // может быть null/undefined
 
 // Справочники
 const ROOMS = ["Белый", "Серый", "Черный"] as const;
-const TEACHERS = ["Саша", "Яна", "Гриша", "Соня", "Вика", "Даша", "Ника", "Богдан"] as const;
-const TYPES = ["Группа", "Индива", "Педагог"] as const;
+const TEACHERS = ["Саша", "Яна", "Гриша", "Соня", "Вика", "Даша", "Ника", "???"] as const;
+const TYPES = ["Группа", "Индива", "Мастеркласс", "Педагог"] as const;
 
 // Типы
 type Room = (typeof ROOMS)[number];
@@ -663,6 +663,13 @@ function DraftBlock({
         <div className="mt-1 text-xs text-neutral-200/90">Растягивайте за верх/низ; тело — прокрутка</div>
       </div>
 
+      {!detailsOpen && (
+        <div className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 transition-all duration-300 ease-out ${hintShown ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-1 scale-95'}`}>
+          <div className="rounded-full border border-neutral-600/60 bg-neutral-800/80 px-3 py-1 text-[11px] text-neutral-200 shadow">
+            Нажмите по блоку, чтобы открыть детали
+          </div>
+        </div>
+      )}
       {/* Зона панорамирования (тело) — НЕ двигает бронь */}
       <div
         className="absolute inset-x-0 top-4 bottom-4 z-10 cursor-default"
@@ -696,7 +703,7 @@ function DraftBlock({
             onPointerDownCapture={(e) => e.stopPropagation()}
             onPointerUpCapture={(e) => e.stopPropagation()}
             onPointerMoveCapture={(e) => e.stopPropagation()}
-            className="mx-auto max-w-md rounded-t-2xl border border-neutral-700/70 bg-neutral-900/95 shadow-2xl backdrop-blur p-3 pb-[env(safe-area-inset-bottom)] max-h-[36vh] overflow-y-auto"
+            className="mx-auto max-w-md rounded-t-2xl border border-neutral-700/70 bg-neutral-900/95 shadow-2xl backdrop-blur p-3 pb-[env(safe-area-inset-bottom)] h-[50vh] overflow-y-auto"
           >
             <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-neutral-700/80" />
             <div className="mb-2 flex items-center justify-between text-sm">
