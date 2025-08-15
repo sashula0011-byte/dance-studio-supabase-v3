@@ -366,7 +366,10 @@ function AddScreen({
     };
     // направляем авто-прокрутку следить за активной ручкой
     scrollFocusMode.current = mode;
-  };
+    // лёгкая вибрация при захвате плашки (если поддерживается)
+    if (mode === "resize-top" || mode === "resize-bottom") {
+      try { (navigator as any).vibrate?.(10); } catch {}
+    }
   }
   function onDraftPointerMove(e: React.PointerEvent) {
     if (!dragState.current || !draft) return;
@@ -396,7 +399,6 @@ function AddScreen({
     }
     // сбрасываем фокус автопрокрутки
     scrollFocusMode.current = null;
-  } catch {} ; dragState.current = null; }
   }
 
   const columnHeight = DAY_MIN * PX_PER_MIN;
@@ -607,18 +609,22 @@ function DraftBlock({
 
       <div
         role="separator"
-        className="absolute left-2 right-2 top-0 -translate-y-1/2 h-7 sm:h-5 cursor-ns-resize z-20 rounded-md border border-sky-400/50 bg-sky-400/30"
+        className="absolute left-2 right-2 top-0 -translate-y-1/2 z-20 h-8 sm:h-6 cursor-ns-resize"
         style={{ touchAction: "none" as any }}
         onPointerDown={(e) => onPointerDown(e, "resize-top")}
         title="Растянуть сверху"
-      />
+      >
+        <div className="mx-auto h-1.5 sm:h-1 w-full rounded-full border border-sky-400/50 bg-sky-400/30" />
+      </div>
       <div
         role="separator"
-        className="absolute left-2 right-2 bottom-0 translate-y-1/2 h-7 sm:h-5 cursor-ns-resize z-20 rounded-md border border-sky-400/50 bg-sky-400/30"
+        className="absolute left-2 right-2 bottom-0 translate-y-1/2 z-20 h-8 sm:h-6 cursor-ns-resize"
         style={{ touchAction: "none" as any }}
         onPointerDown={(e) => onPointerDown(e, "resize-bottom")}
         title="Растянуть снизу"
-      />
+      >
+        <div className="mx-auto h-1.5 sm:h-1 w-full rounded-full border border-sky-400/50 bg-sky-400/30" />
+      </div>
       <div
         className="absolute inset-x-0 top-4 bottom-4 z-10 cursor-default"
         style={{ touchAction: "none" as any }}
