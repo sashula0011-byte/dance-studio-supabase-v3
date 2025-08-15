@@ -754,23 +754,8 @@ function DraftBlock({
   onCancel: () => void;
   currentName: string | null;
 }) {
-  valid: boolean;
-  onPointerDown: (
-    e: React.PointerEvent,
-    mode: "move" | "resize-top" | "resize-bottom"
-  ) => void;
-  onPointerMove: (e: React.PointerEvent) => void;
-  onPointerUp: (e: React.PointerEvent) => void;
-  gridRef: React.RefObject<HTMLDivElement>;
-  form: { teacher?: Teacher; type?: LessonType; note?: string };
-  setForm: React.Dispatch<
-    React.SetStateAction<{ teacher?: Teacher; type?: LessonType; note?: string }>
-  >;
-  onSave: () => void | Promise<void>;
-  onCancel: () => void;
-}) {
   const top = (draft.start - START_MIN) * PX_PER_MIN;
-  const height = (draft.end - draft.start) * PX_PER_MIN;
+  const height = (draft.end - draft.start) * PX_P
 
   // детект мобилы
   const [isMobile, setIsMobile] = useState(false);
@@ -1149,108 +1134,4 @@ function OverviewScreen({
                             onClick={(e) => {
                               e.stopPropagation();
                               setPendingDeleteId(b.id);
-                            }}
-                            className="ml-1 inline-flex items-center rounded-md border border-neutral-600 px-1 py-[2px] text-[10px] hover:bg-neutral-700"
-                            title="Удалить бронь"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        )
-                      ) : (
-                        <span
-                          className="ml-1 inline-flex items-center gap-1 opacity-70"
-                          title="Чужая запись — удалить нельзя"
-                        >
-                          <Lock className="h-3 w-3" />
-                        </span>
-                      )}
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-    </main>
-  );
-}
-
-// ===================== Диалог выбора имени (показывается только до выбора) =====================
-function NameDialog({
-  onClose,
-  onSave,
-}: {
-  onClose: () => void;
-  onSave: (name: string) => void;
-}) {
-  const [name, setName] = useState<string>("");
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-4"
-      onMouseDown={onClose}
-    >
-      <div
-        className="w-full max-w-md rounded-2xl border border-neutral-700 bg-neutral-900 p-4 shadow-2xl"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <UserIcon className="h-5 w-5 text-neutral-400" />
-            <span className="font-medium">Войти</span>
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-md border border-neutral-700 px-2 py-1 text-sm hover:bg-neutral-800"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <label className="text-xs text-neutral-400">Ваше имя</label>
-        <select
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-800/80 px-2 py-2 text-sm outline-none focus:border-neutral-600"
-        >
-          <option value="">— выберите —</option>
-          {TEACHERS.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-
-        <div className="mt-3 flex items-center justify-end gap-2">
-          <button
-            onClick={() => onSave(name)}
-            disabled={!name}
-            className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${
-              name
-                ? "bg-sky-500 text-white hover:bg-sky-400"
-                : "bg-neutral-700/70 text-neutral-300 cursor-not-allowed"
-            }`}
-          >
-            <Save className="h-4 w-4" /> Сохранить
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ===================== Небольшие runtime-проверки =====================
-(function runDevChecks() {
-  try {
-    console.assert(snapToStep(67, 15) === 60, "snapToStep 15->60");
-    console.assert(snapToStep(74, 15) === 75, "snapToStep 15->75");
-    console.assert(clamp(5, 10, 20) === 10, "clamp lower");
-    console.assert(clamp(25, 10, 20) === 20, "clamp upper");
-    console.assert(snapToStep(67) === 70, "default 10min -> 70");
-    console.assert(m2hm(START_MIN) === "07:00", "start label");
-  } catch (e) {
-    console.warn("Dev checks failed:", e);
-  }
-})();
 
